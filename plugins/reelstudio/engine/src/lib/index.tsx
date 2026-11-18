@@ -27,6 +27,8 @@ export function isLight(hex: string) {
 const shadowFor = (b: Brand) => (isLight(b.colors.bg1) ? 'none' : '0 2px 4px rgba(0,0,0,.85), 0 6px 34px rgba(0,0,0,.75), 0 0 80px rgba(0,0,0,.5)');
 export type ReelProps = {timeline: Timeline; brand: Brand; reel: any};
 
+export type CreditEntry = {file: string; title?: string; author?: string; date?: string; license?: string; source?: string};
+const CreditsCtx = createContext<CreditEntry[]>([]);
 const Ctx = createContext<{brand: Brand; scene?: TScene; still?: boolean}>({brand: {colors: {bg1: '#000', bg2: '#111', accent: '#ff0', text: '#fff', muted: '#aaa'}}});
 export const useBrand = () => useContext(Ctx).brand;
 export const useScene = () => useContext(Ctx).scene!;
@@ -451,10 +453,10 @@ export const At: React.FC<{x: number; y: number; w?: number; h?: number; center?
 );
 
 /** A generated image placed in the world as a framed card. Keep it at or below its native size on screen (zoom × w ≤ ~1.2× the PNG width). */
-export const WorldImage: React.FC<{src: string; x: number; y: number; w: number; h: number; radius?: number; frame?: boolean; rotate?: number}> = ({src, x, y, w, h, radius = 28, frame = true, rotate = 0}) => (
+export const WorldImage: React.FC<{src: string; x: number; y: number; w: number; h: number; radius?: number; frame?: boolean; rotate?: number; grade?: Grade; shadow?: boolean}> = ({src, x, y, w, h, radius = 28, frame = true, rotate = 0, grade = 'none', shadow = true}) => (
   <At x={x} y={y} w={w} h={h} style={{transform: `translate(-50%,-50%) rotate(${rotate}deg)`}}>
-    <div style={{width: '100%', height: '100%', borderRadius: radius, overflow: 'hidden', background: '#fff', padding: frame ? 10 : 0, boxSizing: 'border-box', boxShadow: '0 30px 60px -30px rgba(20,30,50,.45), 0 2px 6px rgba(20,30,50,.12)'}}>
-      <Img src={staticFile(src)} style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: frame ? radius - 8 : radius}} />
+    <div style={{width: '100%', height: '100%', borderRadius: radius, overflow: 'hidden', background: frame ? '#fff' : 'transparent', padding: frame ? 10 : 0, boxSizing: 'border-box', boxShadow: shadow ? '0 30px 60px -30px rgba(20,30,50,.45), 0 2px 6px rgba(20,30,50,.12)' : 'none'}}>
+      <Img src={staticFile(src)} style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: frame ? radius - 8 : radius, filter: gradeFilter(grade)}} />
     </div>
   </At>
 );
@@ -483,16 +485,18 @@ type SceneMap = Record<string, React.ReactNode | (() => React.ReactNode)>;
  * transition:  frames of the overlay fade between scenes
  */
 export const Reel: React.FC<ReelProps & {scenes: SceneMap; backgrounds?: SceneMap; captions?: boolean; progress?: boolean; handle?: boolean; transition?: number;
-  world?: React.ReactNode; worldSize?: [number, number]; camera?: Record<string, Shot | Shot[]>; drift?: number}> = ({
-  timeline, brand, scenes, backgrounds = {}, captions = true, progress = true, handle = true, transition = 8,
-  world, worldSize = [3240, 5760], camera = {}, drift = 0.04,
+  world?: React.ReactNode; worldSize?: [number, number]; camera?: Record<string, Shot | Shot[]>; drift?: number; overlay?: React.ReactNode}> = ({
+  timeline, brand, reel, scenes, backgrounds = {}, captions = true, progress = true, handle = true, transition = 8,
+  world, worldSize = [3240, 5760], camera = {}, drift = 0.04, overlay,
 }) => {
+  const reelCredits: CreditEntry[] = reel?.credits || [];
   const b: Brand = {...brand, colors: {...brand.colors}};
   useFonts(b);
   const keys = React.useMemo(() => buildKeys(timeline, camera), [timeline, camera]);
   const cam = React.useMemo(() => ({at: (g: number) => clampCam(camAt(keys, g, drift), worldSize)}), [keys, drift, worldSize]);
   return (
     <Ctx.Provider value={{brand: b}}>
+      <CreditsCtx.Provider value={reelCredits}>
       <CamCtx.Provider value={cam}>
         <AbsoluteFill style={{fontFamily: b.font || 'Inter, -apple-system, sans-serif', background: b.colors.bg1, overflow: 'hidden'}}>
           {world ? <><BrandBG /><WorldLayer size={worldSize}>{world}</WorldLayer></> : null}
@@ -512,10 +516,12 @@ export const Reel: React.FC<ReelProps & {scenes: SceneMap; backgrounds?: SceneMa
               </Sequence>
             );
           })}
+          {overlay}
           {handle ? <Handle /> : null}
           {progress ? <Progress total={timeline.total} /> : null}
         </AbsoluteFill>
       </CamCtx.Provider>
+      </CreditsCtx.Provider>
     </Ctx.Provider>
   );
 };
@@ -733,7 +739,7 @@ export const StatCard: React.FC<{value: number; prefix?: string; suffix?: string
   const v = interpolate(f, [delay + 4, delay + 40], [0, value], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic)});
   return (
     <div style={{position: 'absolute', left: x, top: y, width: w, transform: `translate(-50%,-50%) translateY(${(1 - p) * 60}px)`, opacity: Math.min(1, p * 1.4), background: b.colors.card || '#fff', borderRadius: 36, padding: '34px 40px', boxShadow: SHADOW, textAlign: 'center'}}>
-      <div style={{fontFamily: displayOf(b), fontSize: 150, fontWeight: 600, color: b.colors.accent, letterSpacing: -4, lineHeight: 1, fontVariantNumeric: 'tabular-nums'}}>{prefix}{v.toLocaleString('it-IT', {minimumFractionDigits: decimals, maximumFractionDigits: decimals})}{suffix}</div>
+      <div style={{fontFamily: displayOf(b), fontSize: fitFont(prefix + value.toLocaleString('it-IT', {minimumFractionDigits: decimals}) + suffix, {width: w - 90, lines: 1, max: 150, min: 64, charW: 0.6}), fontWeight: 600, color: b.colors.accent, letterSpacing: -3, lineHeight: 1, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums'}}>{prefix}{v.toLocaleString('it-IT', {minimumFractionDigits: decimals, maximumFractionDigits: decimals})}{suffix}</div>
       <div style={{fontFamily: sans, fontSize: 36, fontWeight: 600, color: ink(b), marginTop: 12, lineHeight: 1.2}}><Rich text={label} /></div>
     </div>
   );
@@ -781,7 +787,7 @@ export const ChartCard: React.FC<{type?: 'line' | 'bar'; data: number[]; labels?
       </svg>
       {type === 'line' && d > 0.95 ? <div style={{position: 'absolute', left: pts[data.length - 1][0], top: pts[data.length - 1][1] - 22, transform: 'translate(-100%,-100%)', fontFamily: sans, fontWeight: 800, fontSize: 34, color: b.colors.accent}}>{data[data.length - 1].toLocaleString('it-IT')}{unit}</div> : null}
       {(type === 'line' ? [0, labels.length - 1] : labels.map((_, i) => i)).filter((i) => labels[i] !== undefined).map((i) => (
-        <div key={i} style={{position: 'absolute', top: h - pad.b + 18, left: type === 'line' ? (i === 0 ? pad.l : pad.l + W) : X(i), transform: type === 'line' ? (i === 0 ? 'none' : 'translateX(-100%)') : 'translateX(-50%)', fontFamily: sans, fontSize: 24, fontWeight: 600, color: b.colors.muted}}>{labels[i]}</div>
+        <div key={i} style={{position: 'absolute', top: h - pad.b + 18, left: type === 'line' ? (i === 0 ? pad.l : pad.l + W) : X(i), transform: type === 'line' ? (i === 0 ? 'none' : 'translateX(-100%)') : 'translateX(-50%)', fontFamily: sans, fontSize: 24, fontWeight: 600, color: b.colors.muted, whiteSpace: 'nowrap'}}>{labels[i]}</div>
       ))}
     </div>
   );
@@ -822,6 +828,72 @@ export const Source: React.FC<{text: string; y?: number}> = ({text, y = 1180}) =
     <AbsoluteFill style={{top: y, height: 'auto', bottom: 'auto', left: 70, right: 70, width: 'auto', display: 'flex', alignItems: 'center', opacity: o}}>
       <div style={{width: 'fit-content', maxWidth: '100%', padding: '8px 18px', borderRadius: 14, background: `${b.colors.bg1}E6`, fontFamily: sans, fontSize: 24, fontWeight: 500, color: b.colors.muted, textAlign: 'center', lineHeight: 1.3}}>{text}</div>
     </AbsoluteFill>
+  );
+};
+
+// ---------- photos: archival treatment, grain, credits ----------
+export type Grade = 'none' | 'bw' | 'sepia' | 'faded' | 'punch';
+/** CSS filter for a photo grade: bw (rich black and white), sepia (warm archival), faded (soft, low contrast), punch (vivid). */
+export const gradeFilter = (g: Grade = 'none') => ({
+  none: 'none', bw: 'grayscale(1) contrast(1.12) brightness(1.03)', sepia: 'grayscale(1) sepia(.42) contrast(1.08) brightness(1.02)',
+  faded: 'contrast(.9) saturate(.75) brightness(1.05)', punch: 'contrast(1.12) saturate(1.18)',
+}[g]);
+
+/** Animated film grain + soft vignette over everything below it. Deterministic (seed changes with the frame). */
+export const Grain: React.FC<{amount?: number; vignette?: number}> = ({amount = 0.16, vignette = 0.35}) => {
+  const f = useCurrentFrame();
+  const id = `rs-grain-${f % 7}`;
+  return (
+    <AbsoluteFill style={{pointerEvents: 'none'}}>
+      <svg width={1080} height={1920} style={{position: 'absolute', inset: 0, opacity: amount, mixBlendMode: 'multiply'}}>
+        <filter id={id}><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves={2} seed={f % 7} /><feColorMatrix type="saturate" values="0" /></filter>
+        <rect width="100%" height="100%" filter={`url(#${id})`} />
+      </svg>
+      <AbsoluteFill style={{background: `radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(0,0,0,${vignette}) 100%)`}} />
+    </AbsoluteFill>
+  );
+};
+
+/** Credit line for a photo fetched with `rs photo` (author · license · source), read from assets/credits.json. */
+export const Credit: React.FC<{file: string; x?: number; y?: number; align?: 'left' | 'right' | 'center'; light?: boolean}> = ({file, x = 70, y = 1150, align = 'left', light}) => {
+  const b = useBrand();
+  const c = useContext(CreditsCtx).find((e) => e.file === file);
+  if (!c) return null;
+  const who = (c.author || '').replace(/\s*\(.*?\)\s*/g, ' ').trim().slice(0, 48);
+  const txt = ['Foto', who, c.license, 'Wikimedia Commons'].filter(Boolean).join(' · ');
+  return (
+    <div style={{position: 'absolute', left: align === 'right' ? undefined : x, right: align === 'right' ? 70 : undefined, top: y, width: align === 'center' ? 940 : undefined, textAlign: align, fontFamily: sans, fontSize: 20, fontWeight: 500, letterSpacing: 0.2, color: light ? 'rgba(255,255,255,.82)' : b.colors.muted, textShadow: light ? '0 1px 6px rgba(0,0,0,.6)' : 'none'}}>{txt}</div>
+  );
+};
+
+/**
+ * A photo on screen (screen px), framed or full-bleed, with a slow Ken Burns move and an optional archival grade.
+ * full: covers the screen (then x/y/w/h are ignored). from/to: [scale, xPct, yPct] start and end of the move.
+ */
+export const Photo: React.FC<{src: string; x?: number; y?: number; w?: number; h?: number; full?: boolean; grade?: Grade; frame?: boolean; rotate?: number;
+  from?: [number, number, number]; to?: [number, number, number]; delay?: number; credit?: boolean; dim?: number}> = ({src, x = 540, y = 820, w = 900, h = 640, full, grade = 'none', frame = true, rotate = 0, from = [1.06, 50, 50], to = [1.16, 50, 45], delay = 0, credit = true, dim = 0}) => {
+  const f = useF();
+  const s = useScene();
+  const d = s?.duration || 150;
+  const t = interpolate(f, [0, d], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.inOut(Easing.sin)});
+  const sc = from[0] + (to[0] - from[0]) * t, px = from[1] + (to[1] - from[1]) * t, py = from[2] + (to[2] - from[2]) * t;
+  const p = usePop(delay, 16);
+  const img = <Img src={staticFile(src)} style={{width: '100%', height: '100%', objectFit: 'cover', transform: `scale(${sc})`, transformOrigin: `${px}% ${py}%`, filter: gradeFilter(grade)}} />;
+  if (full) return (
+    <AbsoluteFill style={{overflow: 'hidden', background: '#000'}}>
+      {img}
+      {dim ? <AbsoluteFill style={{background: `linear-gradient(180deg, rgba(0,0,0,${dim * 0.7}) 0%, rgba(0,0,0,${dim * 0.25}) 45%, rgba(0,0,0,${dim}) 100%)`}} /> : null}
+      {credit ? <Credit file={src} y={1170} light /> : null}
+    </AbsoluteFill>
+  );
+  return (
+    <>
+      <div style={{position: 'absolute', left: x, top: y, width: w, height: h, transform: `translate(-50%,-50%) rotate(${rotate}deg) translateY(${(1 - p) * 70}px) scale(${0.92 + p * 0.08})`, opacity: Math.min(1, p * 1.4),
+        background: '#fff', padding: frame ? 14 : 0, boxSizing: 'border-box', borderRadius: frame ? 10 : 24, boxShadow: '0 40px 70px -30px rgba(10,15,25,.6), 0 3px 8px rgba(10,15,25,.15)'}}>
+        <div style={{width: '100%', height: '100%', overflow: 'hidden', borderRadius: frame ? 4 : 24}}>{img}</div>
+      </div>
+      {credit ? <Credit file={src} x={x - w / 2} y={y + h / 2 + 16} /> : null}
+    </>
   );
 };
 

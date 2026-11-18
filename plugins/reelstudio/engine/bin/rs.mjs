@@ -245,10 +245,22 @@ async function ttsScene(text, brand, m, outMp3, flags) {
     return 'macOS say';
   }
   const body = {model, input: text, response_format: 'mp3'};
-  const voice = brand.voice?.voice || (model.startsWith('elevenlabs/') ? m.tts.default_voice : '');
+  // brand.voice.voices: {model: voice}. brand.voice.voice applies to brand.voice.model, or to ElevenLabs if no model is set (older brands)
+  const bv = brand.voice || {};
+  const brandVoice = bv.voices?.[model] || (bv.voice && (bv.model ? bv.model === model : model.startsWith('elevenlabs/')) ? bv.voice : '');
+  const voice = flags.voice || brandVoice || m.tts.voices?.[model] || (model.startsWith('elevenlabs/') ? m.tts.default_voice : '');
   if (voice) body.voice = voice;
   if (brand.voice?.instructions) body.instructions = brand.voice.instructions;
   if (brand.voice?.speed) body.speed = brand.voice.speed;
+  if (model.startsWith('google/')) {
+    // Gemini TTS returns raw PCM only (16-bit, 24 kHz, mono): convert it to mp3
+    body.response_format = 'pcm';
+    const pcm = outMp3.replace(/\.mp3$/, '.pcm');
+    fs.writeFileSync(pcm, await orFetch('/audio/speech', body, {raw: true}));
+    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 's16le', '-ar', '24000', '-ac', '1', '-i', pcm, '-ar', '44100', '-b:a', '192k', outMp3]);
+    fs.rmSync(pcm);
+    return model;
+  }
   fs.writeFileSync(outMp3, await orFetch('/audio/speech', body, {raw: true}));
   return model;
 }
@@ -337,9 +349,20 @@ async function generateImage({prompt, out, model, look, refs = [], flags = {}}) 
   const body = {model, prompt: fullPrompt, n: 1, aspect_ratio: flags.aspect || '9:16', output_format: 'png', ...(m.image.params?.[model] || {})};
   if (used.length) body.input_references = used.map((f) => ({type: 'image_url', image_url: {url: toDataUrl(f)}}));
   if (flags.quality) body.quality = flags.quality;
+  // output resolution tier (1K | 2K | 4K): needed for images the camera zooms into
+  const res = flags.res || m.image.resolution?.[model];
+  if (res) body.resolution = String(res).toUpperCase();
   if (flags.transparent) body.background = 'transparent';
   log(`  generating with ${model}${used.length ? ` + ${used.length} reference image(s)` : ''}…`);
-  const r = await orFetch('/images', body);
+  let r;
+  try { r = await orFetch('/images', body); } catch (e) {
+    // some models reject optional fields ("does not support: output_format, background"): drop them and retry once
+    const bad = String(e.message).match(/does not support:\s*([a-z_,\s]+)/i)?.[1];
+    if (!bad) throw e;
+    for (const k of bad.split(/[,\s]+/).filter(Boolean)) delete body[k];
+    log(`  retrying without: ${bad.trim()}`);
+    r = await orFetch('/images', body);
+  }
   const b64 = r.data?.[0]?.b64_json;
   if (!b64) die('no image returned: ' + JSON.stringify(r).slice(0, 300));
   fs.mkdirSync(path.dirname(out), {recursive: true});
@@ -351,6 +374,7 @@ function pickImageModel(flags) {
   const m = models();
   if (flags.model) return flags.model;
   if (flags.hero) return m.image.hero;
+  if (flags.world) return m.image.world;
   return m.image[flags.tier || 'model'] || m.image.model;
 }
 
@@ -400,7 +424,8 @@ async function prep(slug) {
   const brand = await brandProps(d, reel.brand);
   const R = await import(path.join(ENGINE, 'node_modules/@remotion/renderer/dist/index.js'));
   const serveUrl = await bundleReel(d);
-  const inputProps = {timeline, brand, reel};
+  const credits = readJSON(path.join(d, 'assets', 'credits.json'), []);
+  const inputProps = {timeline, brand, reel: {...reel, credits}};
   return {d, timeline, reel, R, serveUrl, inputProps};
 }
 
@@ -437,6 +462,104 @@ async function cmdFrames(pos, flags) {
     fs.rmSync(tmp, {recursive: true, force: true});
     log(`✓ ${timeline.scenes.length} strips (<id>-strip.png: 0%, 15%, 35%, 60%, 90% of each scene) to judge the motion.`);
   }
+}
+
+// ---------- real photos (Wikimedia Commons: public domain and free licenses only) ----------
+const COMMONS = 'https://commons.wikimedia.org/w/api.php';
+const COMMONS_UA = 'ReelStudio/0.3 (local video tool; https://github.com/luke30001/reelstudio-codex)';
+const FREE = /public domain|^pd|cc0|cc[ -]by|attribution|gfdl|no restrictions/i;
+const strip = (h = '') => String(h).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+async function commons(params) {
+  const u = COMMONS + '?' + new URLSearchParams({format: 'json', origin: '*', ...params});
+  const r = await fetch(u, {headers: {'User-Agent': COMMONS_UA}});
+  if (!r.ok) throw new Error('Wikimedia Commons ' + r.status);
+  return r.json();
+}
+function photoInfo(p) {
+  const ii = p.imageinfo?.[0] || {}, em = ii.extmetadata || {};
+  let author = strip(em.Artist?.value);
+  if (!author || /unknown author/i.test(author)) author = /NARA/.test(p.title) ? 'U.S. National Archives (NARA)' : /LC-|Library of Congress/i.test(p.title + strip(em.Credit?.value)) ? 'Library of Congress' : 'autore sconosciuto';
+  return {title: p.title, author: author.slice(0, 160), width: ii.width, height: ii.height, mime: ii.mime, url: ii.url, thumb: ii.thumburl, page: ii.descriptionurl,
+    license: strip(em.LicenseShortName?.value), licenseUrl: strip(em.LicenseUrl?.value),
+    credit: strip(em.Credit?.value).slice(0, 200), date: strip(em.DateTimeOriginal?.value).replace(/date QS:.*$/, '').trim().slice(0, 60), description: strip(em.ImageDescription?.value).slice(0, 240)};
+}
+/**
+ * rs photo <reel> search "<query>" [--limit 12]   → numbered results + frames/photos-sheet.png (contact sheet, row by row)
+ * rs photo <reel> get <n | "File:Title.jpg"> <name> → assets/img/<name>.jpg (up to 3000 px) + credit in assets/credits.json
+ */
+async function cmdPhoto(pos, flags) {
+  const d = reelDir(pos[0]);
+  const sub = pos[1];
+  const dir = path.join(d, 'assets', 'photos');
+  fs.mkdirSync(dir, {recursive: true});
+  if (sub === 'search') {
+    const q = pos.slice(2).join(' ');
+    if (!q) die('usage: rs photo <reel> search "<query>" [--limit 12]');
+    const limit = Math.min(30, Number(flags.limit) || 12);
+    const r = await commons({action: 'query', generator: 'search', gsrsearch: q + ' filetype:bitmap', gsrnamespace: '6', gsrlimit: String(limit * 2),
+      prop: 'imageinfo', iiprop: 'url|size|mime|extmetadata', iiurlwidth: '400'});
+    const pages = Object.values(r.query?.pages || {}).sort((a, b) => a.index - b.index).map(photoInfo)
+      .filter((x) => /image\/(jpeg|png|tiff|webp)/.test(x.mime || '') && FREE.test(x.license || '')).slice(0, limit);
+    if (!pages.length) die('no free-licensed photos found: try other words (English often works better), a year, a place');
+    writeJSON(path.join(dir, 'search.json'), {query: q, results: pages});
+    const thumbs = path.join(dir, '.thumbs');
+    fs.rmSync(thumbs, {recursive: true, force: true});
+    fs.mkdirSync(thumbs, {recursive: true});
+    const files = [];
+    for (const [i, x] of pages.entries()) {
+      log(`${String(i + 1).padStart(2)}. ${x.title.replace(/^File:/, '')}  ${x.width}x${x.height}  ${x.license}${x.date ? '  ' + x.date : ''}${x.author ? '  — ' + x.author.slice(0, 60) : ''}`);
+      try {
+        const t = path.join(thumbs, `${String(i).padStart(2, '0')}.jpg`);
+        fs.writeFileSync(t, Buffer.from(await (await fetch(x.thumb, {headers: {'User-Agent': COMMONS_UA}})).arrayBuffer()));
+        files.push(t);
+      } catch {}
+    }
+    // contact sheet: 4 per row, 300x300 cells, in result order
+    const sheet = path.join(d, 'frames', 'photos-sheet.png');
+    fs.mkdirSync(path.dirname(sheet), {recursive: true});
+    const cols = 4, rows = Math.ceil(files.length / cols);
+    const inputs = files.flatMap((f) => ['-i', f]);
+    const cells = files.map((_, i) => `[${i}:v]scale=300:300:force_original_aspect_ratio=decrease,pad=300:300:(ow-iw)/2:(oh-ih)/2:color=white,setsar=1[c${i}]`);
+    const layout = files.map((_, i) => `${(i % cols) * 300}_${Math.floor(i / cols) * 300}`).join('|');
+    try {
+      const graph = files.length === 1 ? cells[0].replace(/\[c0\]$/, '') : `${cells.join(';')};${files.map((_, i) => `[c${i}]`).join('')}xstack=inputs=${files.length}:layout=${layout}:fill=white`;
+      execFileSync('ffmpeg', ['-loglevel', 'error', '-y', ...inputs, '-filter_complex', graph, '-frames:v', '1', sheet]);
+      log(`✓ contact sheet ${sheet} (${cols} per row, ${rows} rows, same order as the list). Look at it, then: rs photo ${pos[0]} get <n> <name>`);
+    } catch (e) { log('  (contact sheet failed: ' + e.message.split('\n')[0] + ')'); }
+    return;
+  }
+  if (sub === 'get') {
+    const which = pos[2], name = pos[3];
+    if (!which || !name || !/^[a-z0-9][a-z0-9_-]*$/i.test(name)) die('usage: rs photo <reel> get <n | "File:Title.jpg"> <name>');
+    let title = which;
+    if (/^\d+$/.test(which)) {
+      const s = readJSON(path.join(dir, 'search.json'), null);
+      if (!s) die('run rs photo <reel> search first');
+      title = s.results[Number(which) - 1]?.title || die('no result #' + which);
+    }
+    if (!/^File:/i.test(title)) title = 'File:' + title;
+    const width = Math.min(Number(flags.width) || 3000, 4000);
+    const r = await commons({action: 'query', titles: title, prop: 'imageinfo', iiprop: 'url|size|mime|extmetadata', iiurlwidth: String(width)});
+    const p = Object.values(r.query?.pages || {})[0];
+    if (!p?.imageinfo) die('not found on Wikimedia Commons: ' + title);
+    const x = photoInfo(p);
+    if (!FREE.test(x.license || '')) die(`license "${x.license}" is not clearly free: pick another photo`);
+    const src = x.width > width ? p.imageinfo[0].thumburl : x.url; // thumbs are jpg even for tiff originals
+    const buf = Buffer.from(await (await fetch(src, {headers: {'User-Agent': COMMONS_UA}})).arrayBuffer());
+    const out = path.join(d, 'assets', 'img', name + '.jpg');
+    fs.mkdirSync(path.dirname(out), {recursive: true});
+    const tmp = out + '.src';
+    fs.writeFileSync(tmp, buf);
+    execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-i', tmp, '-q:v', '2', out]); // normalize to jpg
+    fs.rmSync(tmp);
+    const dims = execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0:s=x', out]).toString().trim();
+    const credits = readJSON(path.join(d, 'assets', 'credits.json'), []).filter((c) => c.file !== `img/${name}.jpg`);
+    credits.push({file: `img/${name}.jpg`, title: x.title, author: x.author || x.credit, date: x.date, license: x.license, licenseUrl: x.licenseUrl, source: x.page});
+    writeJSON(path.join(d, 'assets', 'credits.json'), credits);
+    log(`✓ img/${name}.jpg  ${dims}  ${x.license}${x.author ? '  — ' + x.author.slice(0, 80) : ''}\n  credit saved in assets/credits.json (show it with <Credit file="img/${name}.jpg" />)`);
+    return;
+  }
+  die('usage: rs photo <reel> search "<query>" | rs photo <reel> get <n> <name>');
 }
 
 /** Download Lucide icons (ISC license) as SVG into the reel: assets/icons/<name>.svg, used with <SvgIcon name=…>. */
@@ -508,7 +631,7 @@ const {pos, flags} = args(rest);
 const needEngine = ['frames', 'render'];
 if (needEngine.includes(cmd) && !fs.existsSync(path.join(ENGINE, 'node_modules', 'remotion'))) die('run `rs setup` first');
 const table = {setup, new: () => cmdNew(pos, flags), voice: () => cmdVoice(pos, flags), image: () => cmdImage(pos, flags),
-  frames: () => cmdFrames(pos, flags), render: () => cmdRender(pos), models: cmdModels, list: cmdList, icon: () => cmdIcon(pos),
+  frames: () => cmdFrames(pos, flags), render: () => cmdRender(pos), models: cmdModels, list: cmdList, icon: () => cmdIcon(pos), photo: () => cmdPhoto(pos, flags),
   'look-image': () => cmdLookImage(pos, flags), 'install-app': installApp, brand: async () => log(JSON.stringify(await brandProps(reelDir(pos[0]), readJSON(path.join(reelDir(pos[0]), 'reel.json')).brand), null, 2)),
   app: () => import(path.join(HOME, 'app', 'server.mjs'))};
 if (!table[cmd]) {
@@ -516,11 +639,13 @@ if (!table[cmd]) {
   setup                          install engine into ${HOME}
   new "<topic>" [--brand b]      create a reel, prints its name
   voice <reel> [--scene id] [--local] [--tier budget|expressive] [--force]
-  image <reel> <name> "<prompt>" [--hero] [--mascot] [--ref img/x.png] [--no-style]
+  image <reel> <name> "<prompt>" [--hero] [--world] [--res 2K|4K] [--aspect 1:1] [--mascot] [--ref img/x.png] [--no-style]
   look-image <look> <name> "<prompt>" [--mascot] [--hero]
   app                            start the ReelStudio app (http://localhost:4747)
   install-app                    create ~/Applications/ReelStudio.app
   icon <reel> <name> [name…]     download Lucide SVG icons into <reel>/assets/icons
+  photo <reel> search "<query>"  find real photos on Wikimedia Commons (free licenses) + contact sheet
+  photo <reel> get <n> <name>    download photo n as assets/img/<name>.jpg, credit in assets/credits.json
   frames <reel> [--at frame] [--strip]   check stills to <reel>/frames (--strip: motion sheet per scene)
   render <reel>                  final.mp4 + cover.png
   models                         current picks + live OpenRouter catalog

@@ -20,7 +20,7 @@ Everything lives in `~/ReelStudio/`: `reels/<name>/`, `brands/*.json`, `looks/<i
 Run `$RS setup` (copies the engine, installs Remotion once, makes the `default` brand). If it reports no OpenRouter key, the voice falls back to macOS `say` and images are off. Tell the user to add `OPENROUTER_API_KEY=...` to `~/ReelStudio/.env` themselves. Never ask them to paste the key into chat. Re-run `$RS setup` after updating the plugin (the launcher picks the newest installed plugin version).
 
 ## 1. Brief
-Get the topic (or the user's script), the brand (`$RS list` shows brands and looks), the language and the target length (default 25–40 s). For premium editorial quality (smooth camera zooms over one world, serif headline, red pill, clean cards) use a brand with the `editoriale` look and the zoom format of step 5b; any topic works. Read `~/ReelStudio/brands/<brand>.json` and follow its `tone`.
+Get the topic (or the user's script), the brand (`$RS list` shows brands and looks), the language and the target length (default 25–40 s). For premium editorial quality (smooth camera zooms over one world, serif headline, red pill, clean cards) use a brand with the `editoriale` look (or `cronaca` for history and true stories with real photos, brand `storia`) and the zoom format of step 5b; any topic works. Read `~/ReelStudio/brands/<brand>.json` and follow its `tone`.
 
 **The look is the creative line.** Every brand points to a look in `~/ReelStudio/looks/<id>/look.json`. Read it before writing anything and obey its `bible` (layout rules, mascot use, what to avoid). Its colors, font, caption style and background are applied automatically. Its `imageStyle` and reference images are added to every `rs image` call automatically, so all images in the brand share one style. Every reel of a brand must look like part of the same series.
 
@@ -43,16 +43,18 @@ Rules for the script:
 Show the user the script (voiceover lines only) and wait for an OK before spending on voice, unless they said to go straight through.
 
 ## 3. Voice and timing
-`$RS voice <name>`: generates one MP3 per scene with ElevenLabs v4 Turbo via OpenRouter, gets word timestamps from Nemotron transcription, and writes `timeline.json` (frames at 30 fps per scene and per word). Options: `--scene id1,id2` to redo some scenes, `--tier budget` (Speechify Simba 3.5, about 6× cheaper), `--tier expressive` (Gemini 3.8 Flash TTS, follows `voice.instructions`), `--local` (free macOS voice for drafts).
-ElevenLabs v4 understands audio tags in the voiceover such as `[excited]`, `[whispers]` and `[pause]`. Use them sparingly.
+`$RS voice <name>`: generates one MP3 per scene with **Gemini 3.8 Flash TTS** (voice Charon: #1 in the TTS arena, native-sounding Italian) via OpenRouter, gets word timestamps from Nemotron transcription, and writes `timeline.json` (frames at 30 fps per scene and per word). The brand's `voice.instructions` steers tone and pace (write them in the reel's language, e.g. "tono da documentario, ritmo deciso"). Options: `--scene id1,id2` to redo some scenes, `--voice <name>` (Gemini: Charon, Kore, Puck, Aoede, Fenrir, Leda, Orus, Zephyr…), `--tier eleven` (ElevenLabs v4: most expressive, understands `[excited]` `[whispers]` `[pause]` tags, but its premade voices are English speakers), `--tier native` (Microsoft MAI-Voice-2.1, true it-IT voices Luca/Rosa, slower and pausier), `--tier budget`, `--local` (free macOS voice, drafts only). A brand can pin voices per model: `"voice": {"voices": {"google/gemini-3.8-flash-tts": "Kore"}}`.
 
-## 4. Images (optional, cost money)
-Use images when a picture beats typography. Stay within the limit the user gave (default 0–3).
-`$RS image <name> <imgname> "<prompt>"`: 9:16, MAI-Image-2.7 (about $0.035 each) with the look's art direction and reference images.
-- `--hero`: GPT Image 2.6 Sunburst at quality max (#1 in the image arena, about $0.15–0.21). Use it only where quality matters most: the hook or cover image, a mascot scene, a complex scene with fine detail. One or two per reel at most, unless the user asks for maximum quality.
-- `--mascot`: adds the look's mascot as the first reference and keeps it on-model (same face, markings, line style). Use it whenever the mascot appears in an illustration; `--hero --mascot` gives the best fidelity.
-- `--ref img/other.png`: add an earlier image as a reference (for continuity between scenes). `--no-style` skips the look's art direction.
-Describe the subject and the composition only; the look handles the style. Always add "vertical composition, no text". Look at every image you generate (open the PNG with the image viewer tool, `view_image`). Saved as `assets/img/<imgname>.png`, used as `"img/<imgname>.png"`.
+## 4. Visual material: choose what serves each shot
+Nothing is forced: per shot, pick the material that looks best and is honest, and mix freely. Ask the user's limit for paid images (default ≤ 4).
+- **Real photos** (history, news, real places, people, objects that exist): `$RS photo <name> search "<english query, year, place>"` lists free-licensed results from Wikimedia Commons (public domain, CC0, CC BY/BY-SA) and writes `frames/photos-sheet.png` (4 per row, list order): look at it, pick, then `$RS photo <name> get <n> <imgname>` → `assets/img/<imgname>.jpg` (up to 3000 px) with author/license saved in `assets/credits.json`. Always show the credit (`<Credit file="img/x.jpg" />`, or `<Photo … credit>`). Prefer real photos over AI pictures whenever the subject really existed; never present an AI image as a historical photo.
+- **AI images** (illustration, concepts, reconstructions, scenes no camera caught): `$RS image <name> <imgname> "<prompt>"` with the look's art direction and references.
+  - `--world`: Nano Banana 2.1 at **4K** (3072×5504, ~$0.12): a picture big enough to be the camera's world or a large print; stays sharp up to ~2.8× zoom.
+  - `--res 2K|4K` with `--model bytedance-seed/seedream-4.5` (4K, $0.04, denser detail) or other models that support it; `--aspect 1:1|3:4|16:9` for non-vertical prints.
+  - default (MAI-Image-2.7, ~800 px, ~$0.035) and `--hero` (GPT Image 2.6 Sunburst, best detail, ~860 px, ~$0.15–0.21): only for small cards or inserts, never for deep zooms or full-screen backgrounds.
+  - `--mascot`, `--ref img/other.png` (continuity), `--no-style`. Describe subject and composition; the look handles the style. Always add "vertical composition, no text" (or the right aspect). Look at every image you generate (open the PNG with the image viewer tool, `view_image`).
+- **Vector (SVG/React)** where it is cleaner than any picture: charts, numbers, maps and diagrams, timelines, icons (`$RS icon <name> <lucide-name…>`), UI, labels. Build it with care: consistent stroke widths, the look's palette only, soft shadows and gradients, generous spacing. Never fake an object or a scene with crude shapes: if it needs a drawing, use an AI image; if it existed, use a photo.
+- Resolution rule: on screen an image must never be shown larger than its pixel width (zoom × world width ≤ PNG width); `rs frames` will show blur if you break it.
 
 ## 5. Build the scenes: `reels/<name>/src/Reel.tsx`
 Compose the components from `@rs` (source: `~/ReelStudio/engine/src/lib/index.tsx`, read it when you need detail):
@@ -87,52 +89,56 @@ export const Cover = (p: ReelProps) => (
 - Vary the layouts: never use the same component three scenes in a row.
 
 ## 5b. The zoom format (premium editorial quality)
-This is the default for the `editoriale` look and the way to reach top-tier explainer quality on any topic: **one big world, one camera that glides and zooms over it, never a hard cut.** Read the look's `bible` and follow it.
+The way to reach top-tier explainer quality on any topic, with the `editoriale` look (clean explainers) or the `cronaca` look (history, economy, true stories with real photos): **one big world, one camera that glides and zooms over it, never a hard cut.** Read the look's `bible` and follow it. The world can be made of real photos, 4K AI images and vector pieces in any mix (step 4).
 
 ```tsx
 import React from 'react';
-import {Reel, ReelProps, Headline, Pin, Ring, Measure, Spotlight, StatCard, ChartCard, Badge, Lenses, Source, Pill,
-  At, WorldGround, WorldImage, SvgIcon, CoverFrame} from '@rs';
+import {Reel, ReelProps, Headline, Pill, StatCard, Badge, ChartCard, Source, Credit, Grain, At, WorldGround, WorldImage, CoverFrame, AbsoluteFill, useBrand, useReveal} from '@rs';
 
-const W: [number, number] = [3240, 5760];
-// The world: lay out every "place" of the story in world px (3x the screen). Vector = sharp at any zoom.
+const W: [number, number] = [3240, 6300];
+// Prints laid out on a paper table, far apart so the camera travels (photos from `rs photo`, 3000 px wide)
+const P = {crowd: {x: 1050, y: 1600, w: 1600, h: 1186, r: -2}, line: {x: 2200, y: 5050, w: 1500, h: 1206, r: 1.5}};
 const world = (
   <>
-    <WorldGround w={W[0]} h={W[1]} pattern="dots" />
-    <At x={900} y={1500}><SvgIcon name="coffee" size={260} /></At>
-    <At x={2300} y={3600}><div style={{width: 700, height: 420, borderRadius: 40, background: '#fff'}} /></At>
-    <WorldImage src="img/bar.png" x={1700} y={4600} w={760} h={1000} />
+    <WorldGround w={W[0]} h={W[1]} pattern="lines" step={64} />
+    {Object.entries(P).map(([k, p]) => <WorldImage key={k} src={`img/${k}.jpg`} x={p.x} y={p.y} w={p.w} h={p.h} rotate={p.r} radius={6} grade="bw" />)}
+    {/* museum-style labels, a red thread between prints, an AI 4K image or SVG pieces can live here too */}
   </>
 );
+const OVER = {x: 1620, y: 3250, zoom: 0.34};
+const Dim = () => { const b = useBrand(); const o = useReveal(0, 16); return <AbsoluteFill style={{background: b.colors.bg1, opacity: 0.82 * o}} />; };
 
 export default (p: ReelProps) => (
-  <Reel {...p} world={world} worldSize={W}
+  <Reel {...p} world={world} worldSize={W} overlay={<Grain amount={0.14} />}
     camera={{
-      hook: {x: 1620, y: 2900, zoom: 0.36},                 // overview of the whole world
-      where: {x: 900, y: 1500, zoom: 1.6},                  // fly to the first place
-      how: [{x: 2300, y: 3600, zoom: 1.2}, {x: 2300, y: 3700, zoom: 2.4, at: 0.5}], // two moves in one scene
-      cta: {x: 1620, y: 2900, zoom: 0.36},
+      hook: OVER,                                                                  // overview of the whole table
+      crowd: [{x: 1050, y: 1850, zoom: 0.62}, {x: 1170, y: 1720, zoom: 0.95, at: 0.42, move: 40}], // fly in, then dive into a detail
+      chart: {x: 1620, y: 4400, zoom: 0.42},                                       // pull back, dim the world, show data
+      line: {x: 2200, y: 5280, zoom: 0.64},
+      cta: OVER,
     }}
     scenes={{
-      hook: <Headline title={'Quanto caffè\nbeve un italiano?'} pill="più di quanto pensi" />,
-      where: <><Headline title={'Quanto caffè\nbeve un italiano?'} enter={false} /><Pin at={[900, 1500]} label="Napoli" side="right" /></>,
-      how: <><Ring at={[2300, 3700]} r={300} label="*1,5* tazzine al giorno" /><Source text="Fonte: …" /></>,
-      cta: <Headline title={'Seguimi per\naltre misure'} pill="@tuohandle" />,
+      hook: <Headline title={'Il Giovedì nero\ndi Wall Street'} pill="−11% in poche ore" />,
+      crowd: <><StatCard value={12.9} decimals={1} suffix=" mln" label="azioni scambiate: *un record*" y={900} w={680} delay={150} /><Credit file="img/crowd.jpg" y={1165} /></>,
+      chart: <><Dim /><ChartCard type="line" data={[381, 199, 294, 41]} labels={['set 1929', '', '', 'lug 1932']} title="Dow Jones, 1929–1932" x={540} y={720} w={940} h={640} /><Badge value="−89%" label="dal massimo" x={540} y={1150} color="#B3261E" delay={150} /><Source text="Fonte: S&P Dow Jones Indices" y={1215} /></>,
+      line: <><StatCard value={25} suffix="%" label="disoccupati negli USA nel 1933" y={880} w={720} /><Credit file="img/line.jpg" y={1170} /></>,
+      cta: <Headline title={"Storie che hanno\ncambiato l'economia"} pill="segui @tuohandle" />,
     }}
   />
 );
 export const Cover = (p: ReelProps) => (
-  <CoverFrame brand={p.brand} world={world} worldSize={W} shot={{x: 1620, y: 2900, zoom: 0.36}}>
-    <Headline title={'Quanto caffè\nbeve un italiano?'} pill="più di quanto pensi" />
+  <CoverFrame brand={p.brand} world={world} worldSize={W} shot={{x: 1050, y: 1900, zoom: 0.62}}>
+    <Headline title={'Il Giovedì nero\ndi Wall Street'} pill="24 ottobre 1929" /><Grain />
   </CoverFrame>
 );
 ```
 
-- **World**: children of `world` are in world px; `At` places anything (centered), `WorldGround` gives a subtle texture so moves read as motion, `WorldImage` adds a framed generated image. Build the places of the story far apart (≥ 900 px) so the camera really travels. Get icons with `$RS icon <name> <icon…>` (Lucide names) and use `<SvgIcon name=…>`; draw custom shapes with SVG. Keep generated images ≤ 3 and never show one bigger on screen than ~1.2× its pixel width (they are ~800 px wide): zoom × w ≤ 1000.
+- **World**: children of `world` are in world px; `At` places anything (centered), `WorldGround` gives a subtle texture so moves read as motion (`dots`, `grid`, `lines`), `WorldImage` adds a framed print (`grade="bw"|"sepia"|"faded"|"punch"`, `frame`, `rotate`, `radius`). A single `--world` 4K AI image can also be the whole world (`<WorldImage … frame={false} shadow={false} radius={0} w={3072} h={5504} />`, `worldSize={[3072, 5504]}`, zoom 0.36–1). Build the places of the story far apart (≥ 900 px) so the camera really travels. Icons: `$RS icon <name> <icon…>` then `<SvgIcon name=…>`. Make the world taller than the lowest place by at least half a screen at your zoom (the camera is clamped inside the world, so a place near the edge cannot be centered).
+- **Photos on screen** (without a world, or over it): `<Photo src="img/x.jpg" full grade="bw" dim={0.4} />` full-bleed with a slow Ken Burns (`from`/`to` = [scale, x%, y%]) or framed `<Photo src x y w h rotate />`; both print the credit. `<Grain />` (as `overlay`) adds film grain and a vignette for archival stories.
 - **Camera**: `camera={{sceneId: Shot | Shot[]}}`, `Shot = {x, y, zoom, at?, move?, fly?}`. `x, y` is the world point at the center of the screen; zoom 0.33 shows a 3240-wide world whole, 1 = world px are screen px, 2–3.5 = detail. A move takes `move` frames (default 26, eased in-out); long moves dip out ("fly") automatically. While a shot holds the camera pushes in slowly (`drift`, default 4%). Every scene gets at least one shot; vary scale (overview → detail → another detail → overview).
-- **Overlays (screen-space, follow the camera)**: `Headline` (kicker = brand name, `title` with `\n` for the 2-line break, `pill` = the twist; `enter={false}` to keep it in place in later scenes), `Pin at=[x,y] label side`, `Ring at r label` (r in world px), `Measure from to label`, `Spotlight at r`, `Badge value label x y arrow color`, `StatCard value suffix label x y`, `ChartCard type="line"|"bar" data labels title unit highlight x y w h`, `Lenses items=[{src|node,label,highlight}]`, `Tag`, `Pill`, `Source text`. Use `useCam().toScreen([x,y])` to anchor custom overlays.
+- **Overlays (screen-space, follow the camera)**: `Headline` (kicker = brand name, `title` with `\n` for the 2-line break, `pill` = the twist; `enter={false}` to keep it in place in later scenes), `Pin at=[x,y] label side`, `Ring at r label` (r in world px), `Measure from to label`, `Spotlight at r`, `Badge value label x y arrow color`, `StatCard value suffix label x y`, `ChartCard type="line"|"bar" data labels title unit highlight x y w h`, `Lenses items=[{src|node,label,highlight}]`, `Tag`, `Pill`, `Source text`, `Credit file`. Use `useCam().toScreen([x,y])` to anchor custom overlays. To show data over the world, pull the camera back and lay a `Dim` (bg1 at ~80%) under the card. Keep cards from covering credits and captions (content y 200–1200).
 - **Typography**: the look loads a serif `display` font for `Headline`; everything else is Inter. Two fonts only. Headline ≤ 2 lines, pill ≤ 4 words.
-- **Quality bar** (check it in the frames): generous margins (≥ 70 px), nothing touching the edges, aligned centers, white cards with soft shadows, one accent color, no emoji, no clutter (≤ 3 overlays at once), every number with a `Source`, the camera never static for a whole scene and never cutting. The captions stay (pill style) unless the user turns them off.
+- **Quality bar** (check it in the frames): generous margins (≥ 70 px), nothing touching the edges, aligned centers, white cards with soft shadows, one accent color, no emoji, no clutter (≤ 3 overlays at once), every number with a `Source`, every real photo with its `Credit`, no image shown above its native resolution, no crude SVG standing in for a real object, the camera never static for a whole scene and never cutting. The captions stay (pill style) unless the user turns them off.
 
 ## 6. Self-check (mandatory)
 `$RS frames <name>` renders two stills per scene to `reels/<name>/frames/` (`<id>-a` shortly after entry, `<id>-b` near the end). A bundling error means a code bug: fix it and run again. With a camera world add `--strip`: one `<id>-strip.png` per scene with 5 moments (0, 15, 35, 60, 90%) to judge the moves.

@@ -1,33 +1,47 @@
 {
-  "_why": "Chosen 2026-11-17 from Artificial Analysis arenas. Run `rs models` to re-check the live OpenRouter catalog. Override any key in ~/ReelStudio/config.json.",
+  "_why": "Picks reviewed 2026-11-18 (OpenRouter catalog + design arena + listening tests in Italian). Run `rs models` to re-check the live catalog. Override any key in ~/ReelStudio/config.json.",
   "tts": {
-    "model": "elevenlabs/eleven-v4-turbo",
-    "_why": "Speech Arena Elo 1340 (#1), half the price of eleven-v4 (1338). $40 / 1M chars.",
+    "model": "google/gemini-3.8-flash-tts",
+    "_why": "Text-to-speech arena #1 (Elo 1475). Native-sounding Italian with natural pacing, follows `voice.instructions` for tone. Returns PCM; rs converts it to mp3. ~$16 / 1M chars.",
+    "voices": {
+      "google/gemini-3.8-flash-tts": "Charon",
+      "microsoft/mai-voice-2.1": "it-IT-Luca:MAI-Voice-2.1",
+      "elevenlabs/eleven-v4": "george",
+      "elevenlabs/eleven-v4-turbo": "george"
+    },
+    "_voices_why": "Default voice per model. Gemini voices (Charon, Kore, Puck, Aoede, Fenrir, Leda, Orus, Zephyr…) speak Italian natively. MAI-Voice-2.1 has true it-IT voices (Luca, Rosa) but slow, pausy delivery. ElevenLabs premade voices are English speakers reading Italian.",
+    "eleven": "elevenlabs/eleven-v4",
+    "_eleven_why": "Most expressive, understands audio tags like [excited] [whispers] [pause]; English premade voices have a slight accent in Italian. --tier eleven",
     "budget": "speechify/simba-3.5",
-    "_budget_why": "Elo 1291 (#3-7) at $6.6 / 1M chars.",
-    "expressive": "google/gemini-3.8-flash-tts",
-    "_expressive_why": "Elo 1283, accepts `instructions` for tone/pacing, $16 / 1M chars.",
-    "default_voice": "JBFqnCBsd6RMkjVDRZzb",
-    "_voice_why": "ElevenLabs needs an explicit voice; this premade id (George) tested OK in Italian. Set brand.voice.voice to any ElevenLabs voice id."
+    "_budget_why": "Cheap fallback at $6.6 / 1M chars. --tier budget",
+    "native": "microsoft/mai-voice-2.1",
+    "_native_why": "it-IT native voices (Luca, Rosa), studio quality but slower pacing. --tier native",
+    "default_voice": "george"
   },
   "image": {
     "model": "microsoft/mai-image-2.7",
-    "_why": "Default: T2I arena Elo 1214 (#3-5) at ~$0.035/img, accepts up to 5 reference images for style consistency.",
+    "_why": "Small images (cards, lenses, inserts shown below ~800 px): ~$0.035/img, up to 5 reference images for style consistency.",
     "hero": "openai/gpt-image-2.6-sunburst",
-    "_hero_why": "Elo 1261 (#1) at quality=max, ~$0.13-0.21/img, up to 16 references. Use for the cover, the hook and mascot shots.",
+    "_hero_why": "Best detail and prompt following at quality=max, ~$0.13-0.21/img, up to 16 references. ~860 px wide: use as a card, not for deep zooms.",
+    "world": "google/gemini-nano-banana-2.1",
+    "_world_why": "4K output (3072x5504 at 9:16, ~$0.12): big enough to be the camera's world and stay sharp up to ~2.8x zoom on a 1080 screen. Clean editorial illustration. --world",
+    "world_rich": "bytedance-seed/seedream-4.5",
+    "_world_rich_why": "4K output (2304x4096, $0.04): denser, more painterly detail. --model bytedance-seed/seedream-4.5 --res 4K",
     "fast": "microsoft/mai-image-2.7-flash",
+    "resolution": {
+      "google/gemini-nano-banana-2.1": "4K",
+      "bytedance-seed/seedream-4.5": "4K"
+    },
     "params": {
-      "openai/gpt-image-2.6-sunburst": {
-        "quality": "max"
-      },
-      "openai/gpt-image-2.6-flare": {
-        "quality": "max"
-      }
+      "openai/gpt-image-2.6-sunburst": {"quality": "max"},
+      "openai/gpt-image-2.6-flare": {"quality": "max"}
     },
     "maxRefs": {
       "microsoft/mai-image-2.7": 5,
       "microsoft/mai-image-2.7-flash": 5,
-      "openai/gpt-image-2.6-sunburst": 16
+      "openai/gpt-image-2.6-sunburst": 16,
+      "google/gemini-nano-banana-2.1": 8,
+      "bytedance-seed/seedream-4.5": 8
     }
   },
   "stt": {
