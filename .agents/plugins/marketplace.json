@@ -1,0 +1,12 @@
+{
+  "name": "reelstudio",
+  "interface": { "displayName": "ReelStudio" },
+  "plugins": [
+    {
+      "name": "reelstudio",
+      "source": { "source": "local", "path": "./plugins/reelstudio" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Creativity"
+    }
+  ]
+}

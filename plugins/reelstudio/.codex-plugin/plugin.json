@@ -1,0 +1,24 @@
+{
+  "name": "reelstudio",
+  "version": "0.2.1",
+  "description": "Local reel factory: Codex is the producer and the crew; OpenRouter provides voice (TTS), images and word timestamps; Remotion + ffmpeg render the MP4 on your Mac.",
+  "author": { "name": "ReelStudio" },
+  "keywords": ["reels", "tiktok", "shorts", "video", "remotion", "tts"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ReelStudio",
+    "shortDescription": "Topic in, vertical reel out: script, voice, images, frames check, MP4 render.",
+    "longDescription": "Codex writes the script, plans and codes the Remotion scenes and checks its own frames; the rs engine does voice (ElevenLabs via OpenRouter), images, word timestamps and the render, all in ~/ReelStudio.",
+    "developerName": "ReelStudio",
+    "category": "Creativity",
+    "capabilities": ["Skills", "CLI"],
+    "defaultPrompt": [
+      "Make a 30 second reel about why lists help your memory.",
+      "Show me my ReelStudio reels and brands.",
+      "Re-render my last reel with a new hook."
+    ],
+    "brandColor": "#FFD23F",
+    "composerIcon": "./assets/logo.png",
+    "logo": "./assets/logo.png"
+  }
+}

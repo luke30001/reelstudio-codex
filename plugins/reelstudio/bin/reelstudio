@@ -1,0 +1,20 @@
+#!/bin/sh
+# ReelStudio CLI launcher for the Codex plugin.
+# `reelstudio setup` installs/updates the engine in ~/ReelStudio from the newest installed plugin version;
+# every other command runs the engine in ~/ReelStudio.
+HOME_RS="${REELSTUDIO_HOME:-$HOME/ReelStudio}"
+
+find_src() {
+  found=$(ls -d "$HOME"/.codex/plugins/cache/reelstudio/reelstudio/*/engine 2>/dev/null | sort -V | tail -1)
+  [ -n "$found" ] && { echo "$found"; return; }
+  here=$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)   # running from a git checkout
+  [ -f "$here/engine/bin/rs.mjs" ] && echo "$here/engine"
+}
+
+if [ "$1" = "setup" ] || [ ! -f "$HOME_RS/engine/bin/rs.mjs" ]; then
+  SRC=$(find_src)
+  [ -z "$SRC" ] && { echo "✗ ReelStudio Codex plugin not found: run install.sh first"; exit 1; }
+  if [ "$1" = "setup" ]; then exec node "$SRC/bin/rs.mjs" "$@"; fi
+  node "$SRC/bin/rs.mjs" setup || exit 1
+fi
+exec node "$HOME_RS/engine/bin/rs.mjs" "$@"

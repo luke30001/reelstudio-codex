@@ -1,0 +1,38 @@
+{
+  "_why": "Chosen 2026-11-17 from Artificial Analysis arenas. Run `rs models` to re-check the live OpenRouter catalog. Override any key in ~/ReelStudio/config.json.",
+  "tts": {
+    "model": "elevenlabs/eleven-v4-turbo",
+    "_why": "Speech Arena Elo 1340 (#1), half the price of eleven-v4 (1338). $40 / 1M chars.",
+    "budget": "speechify/simba-3.5",
+    "_budget_why": "Elo 1291 (#3-7) at $6.6 / 1M chars.",
+    "expressive": "google/gemini-3.8-flash-tts",
+    "_expressive_why": "Elo 1283, accepts `instructions` for tone/pacing, $16 / 1M chars.",
+    "default_voice": "JBFqnCBsd6RMkjVDRZzb",
+    "_voice_why": "ElevenLabs needs an explicit voice; this premade id (George) tested OK in Italian. Set brand.voice.voice to any ElevenLabs voice id."
+  },
+  "image": {
+    "model": "microsoft/mai-image-2.7",
+    "_why": "Default: T2I arena Elo 1214 (#3-5) at ~$0.035/img, accepts up to 5 reference images for style consistency.",
+    "hero": "openai/gpt-image-2.6-sunburst",
+    "_hero_why": "Elo 1261 (#1) at quality=max, ~$0.13-0.21/img, up to 16 references. Use for the cover, the hook and mascot shots.",
+    "fast": "microsoft/mai-image-2.7-flash",
+    "params": {
+      "openai/gpt-image-2.6-sunburst": {
+        "quality": "max"
+      },
+      "openai/gpt-image-2.6-flare": {
+        "quality": "max"
+      }
+    },
+    "maxRefs": {
+      "microsoft/mai-image-2.7": 5,
+      "microsoft/mai-image-2.7-flash": 5,
+      "openai/gpt-image-2.6-sunburst": 16
+    }
+  },
+  "stt": {
+    "model": "nvidia/nemotron-3.5-transcribe",
+    "_why": "Tested 2026-11-17: the only OpenRouter STT that returned word-level timestamps (WER 3.4%, ~$0.00007/scene). voxtral-small (2.1% WER) rejects word timestamps; grok-stt / voxtral-mini returned empty bodies.",
+    "fallback": "x-ai/grok-stt-2.0"
+  }
+}
