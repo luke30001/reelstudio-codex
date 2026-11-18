@@ -25,6 +25,8 @@ OPENROUTER_API_KEY=sk-or-...
 In Codex: `/reel why lists help your memory`, or just ask "make me a 30 second reel about …".
 Codex shows you the script first, then does the voice, images, frame check and render. Videos end up in `~/ReelStudio/reels/<name>/final.mp4`.
 
+**Premium editorial look (the zoom format):** pick the `editoriale` brand (or point your brand at the `editoriale` look). Codex builds one big vector world for the story and a virtual camera glides and zooms over it, with a serif headline, a red pill, anchored labels, rings, measures, stat cards and animated charts. Edit `~/ReelStudio/brands/editoriale.json` to set your name, handle and voice.
+
 The `reelstudio` command needs the internet and headless Chrome, so Codex asks for permission the first time it runs it outside its sandbox.
 
 Optional web app: `node ~/.codex/plugins/cache/reelstudio/reelstudio/<version>/app-codex/server.mjs` → http://localhost:4749

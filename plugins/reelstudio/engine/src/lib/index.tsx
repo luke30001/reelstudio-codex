@@ -11,9 +11,11 @@ export type TScene = {id: string; from: number; duration: number; audio: string;
 export type Timeline = {fps: number; width: number; height: number; total: number; scenes: TScene[]};
 export type Brand = {
   name?: string; handle?: string; font?: string;
+  /** Headline font (the look's `display` font), e.g. a serif. Falls back to `font`. */
+  display?: string;
   colors: {bg1: string; bg2: string; accent: string; text: string; muted: string; card?: string};
   captions?: 'stroke' | 'pill' | 'clean';
-  background?: 'gradient' | 'paper' | 'solid';
+  background?: 'gradient' | 'paper' | 'solid' | 'editorial';
   mascot?: string;
   fontFiles?: {family: string; weight: string; src: string}[];
 };
@@ -90,9 +92,20 @@ export const PaperBG: React.FC = () => {
   );
 };
 
-/** Background chosen by the look: paper | gradient | solid. */
+/** Editorial: soft vertical wash bg1 -> bg2, faint grain. Calm backdrop for the camera world and headlines. */
+export const EditorialBG: React.FC = () => {
+  const b = useBrand();
+  return (
+    <AbsoluteFill style={{background: `linear-gradient(180deg, ${b.colors.bg1} 0%, ${b.colors.bg1} 30%, ${b.colors.bg2} 100%)`}}>
+      <AbsoluteFill style={{opacity: 0.12, backgroundImage: 'radial-gradient(rgba(0,0,0,.35) 0.6px, transparent 0.8px)', backgroundSize: '5px 5px'}} />
+    </AbsoluteFill>
+  );
+};
+
+/** Background chosen by the look: paper | gradient | solid | editorial. */
 export const BrandBG: React.FC = () => {
   const b = useBrand();
+  if (b.background === 'editorial') return <EditorialBG />;
   if (b.background === 'paper') return <PaperBG />;
   if (b.background === 'solid') return <AbsoluteFill style={{background: b.colors.bg1}} />;
   return <GradientBG />;
@@ -355,58 +368,185 @@ export const Handle: React.FC = () => {
   return <AbsoluteFill style={{top: 80, left: SAFE.side, height: 60, fontSize: 34, fontWeight: 700, color: b.colors.muted, opacity: 0.9}}>{b.handle}</AbsoluteFill>;
 };
 
+// ---------- camera: one big world, a virtual camera that zooms and travels between shots ----------
+/**
+ * A shot frames a point of the world. x, y: world px the camera centers on; zoom: 1 = world px are screen px.
+ * at: when the move starts, as a fraction of the scene (0 = scene start). move: frames the move takes (default 26).
+ * fly: zoom out a bit mid-move (on by default for long moves), like a map flying to a new place.
+ */
+export type Shot = {x: number; y: number; zoom?: number; at?: number; move?: number; fly?: boolean};
+export type CamState = {x: number; y: number; zoom: number};
+type CamKey = CamState & {frame: number; move: number; fly?: boolean};
+const easeIO = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+function buildKeys(timeline: Timeline, camera: Record<string, Shot | Shot[]>): CamKey[] {
+  const keys: CamKey[] = [];
+  for (const s of timeline.scenes) {
+    const list = camera[s.id];
+    if (!list) continue;
+    const arr = Array.isArray(list) ? list : [list];
+    arr.forEach((sh, i) => keys.push({
+      x: sh.x, y: sh.y, zoom: sh.zoom ?? 1, fly: sh.fly, move: sh.move ?? 26,
+      frame: s.from + Math.round((sh.at ?? (i === 0 ? 0 : i / arr.length)) * s.duration),
+    }));
+  }
+  return keys.sort((a, b) => a.frame - b.frame);
+}
+
+/** Camera state at global frame g. Moves ease in-out; zoom is interpolated in log space; long moves "fly" (dip out). */
+function camAt(keys: CamKey[], g: number, drift: number): CamState {
+  if (!keys.length) return {x: 540, y: 960, zoom: 1};
+  let from: CamState = {x: keys[0].x, y: keys[0].y, zoom: keys[0].zoom};
+  const seg = (a: CamState, k: CamKey, f: number): CamState => {
+    const t = Math.max(0, Math.min(1, (f - k.frame) / Math.max(1, k.move)));
+    const e = easeIO(t);
+    const dist = Math.hypot(k.x - a.x, k.y - a.y) * Math.min(a.zoom, k.zoom);
+    const fly = (k.fly ?? dist > 700) ? Math.min(0.45, dist / 3000) * Math.sin(Math.PI * e) : 0;
+    const z = Math.exp(Math.log(a.zoom) + (Math.log(k.zoom) - Math.log(a.zoom)) * e) * (1 - fly);
+    // slow push-in while the shot holds, so the frame never feels frozen
+    const hold = Math.max(0, f - k.frame - k.move);
+    return {x: a.x + (k.x - a.x) * e, y: a.y + (k.y - a.y) * e, zoom: z * (1 + drift * Math.min(1, hold / 240))};
+  };
+  for (let i = 1; i < keys.length; i++) {
+    if (keys[i].frame > g) return seg(from, keys[i - 1], g);
+    from = seg(from, keys[i - 1], keys[i].frame);
+  }
+  return seg(from, keys[keys.length - 1], g);
+}
+
+/** Keep the frame inside the world, so its edge never shows (centers the world if the view is wider than it). */
+function clampCam(c: CamState, size: [number, number]): CamState {
+  const hw = 540 / c.zoom, hh = 960 / c.zoom;
+  const cl = (v: number, half: number, max: number) => (2 * half >= max ? max / 2 : Math.max(half, Math.min(max - half, v)));
+  return {zoom: c.zoom, x: cl(c.x, hw, size[0]), y: cl(c.y, hh, size[1])};
+}
+
+const CamCtx = createContext<{at: (g: number) => CamState} | null>(null);
+/** Current camera state, and a function mapping world points to screen points. Works inside scenes and in the world. */
+export function useCam() {
+  const c = useContext(CamCtx);
+  const ctx = useContext(Ctx);
+  const local = useCurrentFrame();
+  const g = ctx.still ? 0 : (ctx.scene?.from ?? 0) + local;
+  const st = c ? c.at(g) : {x: 540, y: 960, zoom: 1};
+  const toScreen = (p: [number, number]): [number, number] => [540 + (p[0] - st.x) * st.zoom, 960 + (p[1] - st.y) * st.zoom];
+  return {...st, toScreen};
+}
+
+/** The world layer: children are laid out in world px, the camera moves over them. Vector content stays sharp at any zoom. */
+const WorldLayer: React.FC<{children: React.ReactNode; size: [number, number]}> = ({children, size}) => {
+  const {x, y, zoom} = useCam();
+  return (
+    <AbsoluteFill style={{overflow: 'hidden'}}>
+      <div style={{position: 'absolute', left: 0, top: 0, width: size[0], height: size[1], transformOrigin: '0 0', transform: `translate(${540 - x * zoom}px, ${960 - y * zoom}px) scale(${zoom})`}}>
+        {children}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+/** Place anything at world coordinates (inside `world`). */
+export const At: React.FC<{x: number; y: number; w?: number; h?: number; center?: boolean; children: React.ReactNode; style?: React.CSSProperties}> = ({x, y, w, h, center = true, children, style}) => (
+  <div style={{position: 'absolute', left: x, top: y, width: w, height: h, transform: center ? 'translate(-50%,-50%)' : undefined, ...style}}>{children}</div>
+);
+
+/** A generated image placed in the world as a framed card. Keep it at or below its native size on screen (zoom × w ≤ ~1.2× the PNG width). */
+export const WorldImage: React.FC<{src: string; x: number; y: number; w: number; h: number; radius?: number; frame?: boolean; rotate?: number}> = ({src, x, y, w, h, radius = 28, frame = true, rotate = 0}) => (
+  <At x={x} y={y} w={w} h={h} style={{transform: `translate(-50%,-50%) rotate(${rotate}deg)`}}>
+    <div style={{width: '100%', height: '100%', borderRadius: radius, overflow: 'hidden', background: '#fff', padding: frame ? 10 : 0, boxSizing: 'border-box', boxShadow: '0 30px 60px -30px rgba(20,30,50,.45), 0 2px 6px rgba(20,30,50,.12)'}}>
+      <Img src={staticFile(src)} style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: frame ? radius - 8 : radius}} />
+    </div>
+  </At>
+);
+
+/** Large textured ground for the world, so camera moves read as motion. pattern: dots | grid | lines | none. */
+export const WorldGround: React.FC<{w: number; h: number; pattern?: 'dots' | 'grid' | 'lines' | 'none'; color?: string; ink?: string; step?: number}> = ({w, h, pattern = 'dots', color, ink, step = 48}) => {
+  const b = useBrand();
+  const c = ink || b.colors.muted;
+  const bgImg = pattern === 'dots' ? `radial-gradient(${c}33 2px, transparent 2.5px)`
+    : pattern === 'grid' ? `linear-gradient(${c}1f 1.5px, transparent 1.5px), linear-gradient(90deg, ${c}1f 1.5px, transparent 1.5px)`
+    : pattern === 'lines' ? `repeating-linear-gradient(0deg, transparent 0 ${step - 2}px, ${c}22 ${step - 2}px ${step}px)` : 'none';
+  return <div style={{position: 'absolute', left: 0, top: 0, width: w, height: h, background: color || b.colors.bg2, backgroundImage: bgImg, backgroundSize: `${step}px ${step}px`}} />;
+};
+
 // ---------- the reel ----------
 type SceneMap = Record<string, React.ReactNode | (() => React.ReactNode)>;
 
 /**
  * Lays out every scene from the timeline with its voice track.
- * scenes:      id -> visual for that scene
- * backgrounds: id -> background (defaults to the brand gradient)
+ * scenes:      id -> visual for that scene (overlays when a world is used)
+ * backgrounds: id -> background (defaults to the look's background; ignored where the world shows)
+ * world:       optional big canvas (world px) the camera travels over, shared by every scene, never cut
+ * worldSize:   [w, h] of the world in px (default [3240, 5760])
+ * camera:      id -> Shot or Shot[]: where the camera goes in that scene
+ * drift:       slow push-in while a shot holds (default 0.04 = +4%)
+ * transition:  frames of the overlay fade between scenes
  */
-export const Reel: React.FC<ReelProps & {scenes: SceneMap; backgrounds?: SceneMap; captions?: boolean; progress?: boolean; handle?: boolean; transition?: number}> = ({
+export const Reel: React.FC<ReelProps & {scenes: SceneMap; backgrounds?: SceneMap; captions?: boolean; progress?: boolean; handle?: boolean; transition?: number;
+  world?: React.ReactNode; worldSize?: [number, number]; camera?: Record<string, Shot | Shot[]>; drift?: number}> = ({
   timeline, brand, scenes, backgrounds = {}, captions = true, progress = true, handle = true, transition = 8,
+  world, worldSize = [3240, 5760], camera = {}, drift = 0.04,
 }) => {
   const b: Brand = {...brand, colors: {...brand.colors}};
   useFonts(b);
+  const keys = React.useMemo(() => buildKeys(timeline, camera), [timeline, camera]);
+  const cam = React.useMemo(() => ({at: (g: number) => clampCam(camAt(keys, g, drift), worldSize)}), [keys, drift, worldSize]);
   return (
     <Ctx.Provider value={{brand: b}}>
-      <AbsoluteFill style={{fontFamily: b.font || 'Inter, -apple-system, sans-serif', background: b.colors.bg1, overflow: 'hidden'}}>
-        {timeline.scenes.map((s) => {
-          const v = scenes[s.id];
-          const bg = backgrounds[s.id];
-          return (
-            <Sequence key={s.id} from={s.from} durationInFrames={s.duration} name={s.id}>
-              <Ctx.Provider value={{brand: b, scene: s}}>
-                <SceneFade duration={s.duration} t={transition}>
-                  {bg ? (typeof bg === 'function' ? (bg as any)() : bg) : <BrandBG />}
-                  {typeof v === 'function' ? (v as any)() : v ?? <Title text={`⚠ missing scene "${s.id}"`} />}
-                </SceneFade>
-                {captions ? <Captions /> : null}
-                <Audio src={staticFile(s.audio)} />
-              </Ctx.Provider>
-            </Sequence>
-          );
-        })}
-        {handle ? <Handle /> : null}
-        {progress ? <Progress total={timeline.total} /> : null}
-      </AbsoluteFill>
+      <CamCtx.Provider value={cam}>
+        <AbsoluteFill style={{fontFamily: b.font || 'Inter, -apple-system, sans-serif', background: b.colors.bg1, overflow: 'hidden'}}>
+          {world ? <><BrandBG /><WorldLayer size={worldSize}>{world}</WorldLayer></> : null}
+          {timeline.scenes.map((s) => {
+            const v = scenes[s.id];
+            const bg = backgrounds[s.id];
+            return (
+              <Sequence key={s.id} from={s.from} durationInFrames={s.duration} name={s.id}>
+                <Ctx.Provider value={{brand: b, scene: s}}>
+                  <SceneFade duration={s.duration} t={transition} soft={!!world}>
+                    {bg ? (typeof bg === 'function' ? (bg as any)() : bg) : world ? null : <BrandBG />}
+                    {typeof v === 'function' ? (v as any)() : v ?? <Title text={`⚠ missing scene "${s.id}"`} />}
+                  </SceneFade>
+                  {captions ? <Captions /> : null}
+                  <Audio src={staticFile(s.audio)} />
+                </Ctx.Provider>
+              </Sequence>
+            );
+          })}
+          {handle ? <Handle /> : null}
+          {progress ? <Progress total={timeline.total} /> : null}
+        </AbsoluteFill>
+      </CamCtx.Provider>
     </Ctx.Provider>
   );
 };
 
-const SceneFade: React.FC<{children: React.ReactNode; duration: number; t: number}> = ({children, duration, t}) => {
+/** soft: overlays over a continuous world fade in and out without scaling, so only the camera moves. */
+const SceneFade: React.FC<{children: React.ReactNode; duration: number; t: number; soft?: boolean}> = ({children, duration, t, soft}) => {
   const f = useF();
+  if (soft) {
+    const o = Math.min(interpolate(f, [0, t], [0, 1], {extrapolateRight: 'clamp'}), interpolate(f, [duration - 6, duration], [1, 0], {extrapolateLeft: 'clamp'}));
+    return <AbsoluteFill style={{opacity: o}}>{children}</AbsoluteFill>;
+  }
   const o = Math.min(interpolate(f, [0, t], [0, 1], {extrapolateRight: 'clamp'}), interpolate(f, [duration - 4, duration], [1, 0.6], {extrapolateLeft: 'clamp'}));
   const s = interpolate(f, [0, t], [1.04, 1], {extrapolateRight: 'clamp'});
   return <AbsoluteFill style={{opacity: o, transform: `scale(${s})`}}>{children}</AbsoluteFill>;
 };
 
-/** Helper for an optional Cover still: brand context with no timeline. */
-export const CoverFrame: React.FC<{brand: Brand; children: React.ReactNode}> = ({brand, children}) => { useFonts(brand); return (
-  <Ctx.Provider value={{brand, still: true}}>
-    <AbsoluteFill style={{fontFamily: brand.font || 'Inter, -apple-system, sans-serif', background: brand.colors.bg1}}>{children}</AbsoluteFill>
-  </Ctx.Provider>
-); };
+/** Helper for an optional Cover still: brand context with no timeline. Pass world + shot to frame the cover on the world. */
+export const CoverFrame: React.FC<{brand: Brand; children: React.ReactNode; world?: React.ReactNode; worldSize?: [number, number]; shot?: Shot}> = ({brand, children, world, worldSize = [3240, 5760], shot}) => {
+  useFonts(brand);
+  const cam = React.useMemo(() => ({at: () => ({x: shot?.x ?? 540, y: shot?.y ?? 960, zoom: shot?.zoom ?? 1})}), [shot]);
+  return (
+    <Ctx.Provider value={{brand, still: true}}>
+      <CamCtx.Provider value={cam}>
+        <AbsoluteFill style={{fontFamily: brand.font || 'Inter, -apple-system, sans-serif', background: brand.colors.bg1}}>
+          {world ? <><BrandBG /><WorldLayer size={worldSize}>{world}</WorldLayer></> : null}
+          {children}
+        </AbsoluteFill>
+      </CamCtx.Provider>
+    </Ctx.Provider>
+  );
+};
 
 const loaded = new Set<string>();
 /** Loads the look's font files (copied into the reel's assets by rs) before the first frame. */
@@ -421,3 +561,279 @@ function useFonts(b: Brand) {
   });
   return handle;
 }
+
+// ---------- editorial kit: headline, pills, anchored callouts, cards, charts ----------
+const SHADOW = '0 18px 40px -18px rgba(20,30,50,.45), 0 2px 6px rgba(20,30,50,.10)';
+const sans = 'Inter, -apple-system, "Helvetica Neue", sans-serif';
+const displayOf = (b: Brand) => b.display || b.font || sans;
+const ink = (b: Brand) => b.colors.text;
+const onAccent = (b: Brand) => (isLight(b.colors.accent) ? '#111' : '#fff');
+/** Ease-out reveal 0..1 starting at `delay`, lasting `dur` frames (smooth, no bounce). */
+export function useReveal(delay = 0, dur = 18) {
+  const f = useF();
+  return interpolate(f, [delay, delay + dur], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.bezier(0.22, 1, 0.36, 1)});
+}
+
+/** Rounded label in the accent color (the "red pill"). tone: accent | ink | light. */
+export const Pill: React.FC<{text: string; tone?: 'accent' | 'ink' | 'light'; size?: number; delay?: number; style?: React.CSSProperties}> = ({text, tone = 'accent', size = 38, delay = 0, style}) => {
+  const b = useBrand();
+  const p = usePop(delay, 15);
+  const bg = tone === 'accent' ? b.colors.accent : tone === 'ink' ? ink(b) : (b.colors.card || '#fff');
+  const fg = tone === 'accent' ? onAccent(b) : tone === 'ink' ? b.colors.bg1 : ink(b);
+  return (
+    <div style={{display: 'inline-block', width: 'fit-content', alignSelf: 'center', padding: `${size * 0.24}px ${size * 0.66}px`, borderRadius: 999, background: bg, color: fg, fontFamily: sans, fontWeight: 700, fontSize: size, letterSpacing: -0.2, lineHeight: 1.1, whiteSpace: 'nowrap', boxShadow: tone === 'light' ? SHADOW : '0 10px 24px -14px rgba(0,0,0,.45)', transform: `scale(${0.6 + p * 0.4})`, opacity: Math.min(1, p * 1.4), ...style}}>
+      <Rich text={text} accent={tone === 'accent' ? fg : b.colors.accent} />
+    </div>
+  );
+};
+
+/**
+ * The editorial header: tiny tracked kicker, serif headline, accent pill. Sits at the top on a soft fade
+ * so the world shows below. enter={false} shows it already in place (use in scenes after the first).
+ */
+export const Headline: React.FC<{title: string; kicker?: string | false; pill?: string; y?: number; size?: number; delay?: number; enter?: boolean; fade?: boolean; align?: 'center' | 'left'}> = ({title, kicker, pill, y = 210, size, delay = 0, enter = true, fade = true, align = 'center'}) => {
+  const b = useBrand();
+  const k = kicker === false ? null : (kicker ?? b.name ?? '').toUpperCase();
+  const fs = size || fitFont(plain(title), {width: 900, lines: 2, max: 96, min: 60, charW: 0.5});
+  const lines = title.split('\n');
+  const rk0 = useReveal(delay, 14);
+  const rk = enter ? rk0 : 1;
+  return (
+    <>
+      {fade ? <AbsoluteFill style={{height: y + fs * 2.6 + (pill ? 160 : 60), background: `linear-gradient(180deg, ${b.colors.bg1} 0%, ${b.colors.bg1}F2 55%, ${b.colors.bg1}00 100%)`}} /> : null}
+      <AbsoluteFill style={{top: y, left: 70, right: 70, width: 'auto', height: 'auto', bottom: 'auto', display: 'flex', flexDirection: 'column', alignItems: align === 'center' ? 'center' : 'flex-start', gap: 22, textAlign: align}}>
+        {k ? <div style={{fontFamily: sans, fontSize: 24, fontWeight: 600, letterSpacing: 6, color: b.colors.muted, opacity: rk}}>{k}</div> : null}
+        <div style={{fontFamily: displayOf(b), fontSize: fs, fontWeight: 600, lineHeight: 1.06, letterSpacing: -1, color: ink(b)}}>
+          {lines.map((ln, i) => {
+            const r0 = useRevealSafe(delay + 4 + i * 6);
+            const r = enter ? r0 : 1;
+            return (
+              <div key={i} style={{overflow: 'hidden', paddingBottom: fs * 0.08}}>
+                <div style={{transform: `translateY(${(1 - r) * 105}%)`, opacity: Math.min(1, r * 1.5)}}><Rich text={ln} /></div>
+              </div>
+            );
+          })}
+        </div>
+        {pill ? <Pill text={pill} delay={enter ? delay + 14 + lines.length * 6 : -100} /> : null}
+      </AbsoluteFill>
+    </>
+  );
+};
+// hooks inside map: stable count per render (lines don't change), wrapped for readability
+function useRevealSafe(delay: number) { return useReveal(delay, 20); }
+
+/** Small white label, for screen-space use (inside an AbsoluteFill you position). */
+export const Tag: React.FC<{text: string; size?: number; tone?: 'light' | 'ink' | 'accent'; style?: React.CSSProperties}> = ({text, size = 30, tone = 'light', style}) => {
+  const b = useBrand();
+  const bg = tone === 'light' ? (b.colors.card || '#fff') : tone === 'ink' ? ink(b) : b.colors.accent;
+  const fg = tone === 'light' ? ink(b) : tone === 'ink' ? b.colors.bg1 : onAccent(b);
+  return <div style={{display: 'inline-block', width: 'fit-content', padding: `${size * 0.3}px ${size * 0.6}px`, borderRadius: size * 0.55, background: bg, color: fg, fontFamily: sans, fontSize: size, fontWeight: 650, lineHeight: 1.1, whiteSpace: 'nowrap', boxShadow: SHADOW, ...style}}><Rich text={text} accent={tone === 'light' ? b.colors.accent : fg} /></div>;
+};
+
+/**
+ * A point in the world with a label that follows the camera but keeps its screen size.
+ * at: world [x, y]. side: where the label sits. Use inside a scene of a reel that has a world.
+ */
+export const Pin: React.FC<{at: [number, number]; label?: string; side?: 'top' | 'bottom' | 'left' | 'right'; delay?: number; tone?: 'light' | 'ink' | 'accent'; dot?: boolean; size?: number}> = ({at, label, side = 'top', delay = 6, tone = 'light', dot = true, size = 30}) => {
+  const b = useBrand();
+  const {toScreen} = useCam();
+  const f = useF();
+  const p = usePop(delay, 13);
+  const [sx, sy] = toScreen(at);
+  const off = 26 + size;
+  const pos: Record<string, React.CSSProperties> = {
+    top: {left: sx, top: sy - off, transform: `translate(-50%,-100%) scale(${p})`, transformOrigin: '50% 100%'},
+    bottom: {left: sx, top: sy + off, transform: `translate(-50%,0) scale(${p})`, transformOrigin: '50% 0'},
+    left: {left: sx - off, top: sy, transform: `translate(-100%,-50%) scale(${p})`, transformOrigin: '100% 50%'},
+    right: {left: sx + off, top: sy, transform: `translate(0,-50%) scale(${p})`, transformOrigin: '0 50%'},
+  };
+  const lineEnd = side === 'top' ? [sx, sy - off] : side === 'bottom' ? [sx, sy + off] : side === 'left' ? [sx - off, sy] : [sx + off, sy];
+  const pulse = (f - delay) % 45 / 45;
+  return (
+    <AbsoluteFill>
+      <svg width={1080} height={1920} style={{position: 'absolute', left: 0, top: 0, overflow: 'visible'}}>
+        {label ? <line x1={sx} y1={sy} x2={sx + (lineEnd[0] - sx) * p} y2={sy + (lineEnd[1] - sy) * p} stroke={ink(b)} strokeWidth={3} strokeLinecap="round" opacity={0.7} /> : null}
+        {dot ? <>
+          <circle cx={sx} cy={sy} r={10 + pulse * 26} fill="none" stroke={b.colors.accent} strokeWidth={3} opacity={(1 - pulse) * 0.6 * p} />
+          <circle cx={sx} cy={sy} r={11 * p} fill={b.colors.accent} stroke="#fff" strokeWidth={4} />
+        </> : null}
+      </svg>
+      {label ? <div style={{position: 'absolute', ...pos[side], opacity: Math.min(1, p * 1.5)}}><Tag text={label} tone={tone} size={size} /></div> : null}
+    </AbsoluteFill>
+  );
+};
+
+/** A circle drawn around a world point (radius in world px), with an optional label at its top. */
+export const Ring: React.FC<{at: [number, number]; r: number; label?: string; delay?: number; dashed?: boolean; fill?: boolean; color?: string}> = ({at, r, label, delay = 4, dashed, fill = true, color}) => {
+  const b = useBrand();
+  const {toScreen, zoom} = useCam();
+  const d = useReveal(delay, 30);
+  const [sx, sy] = toScreen(at);
+  const R = r * zoom, c = color || b.colors.accent, C = 2 * Math.PI * R;
+  const lp = useReveal(delay + 22, 14);
+  return (
+    <AbsoluteFill>
+      <svg width={1080} height={1920} style={{position: 'absolute', left: 0, top: 0, overflow: 'visible'}}>
+        {fill ? <circle cx={sx} cy={sy} r={R} fill={c} opacity={0.1 * d} /> : null}
+        <circle cx={sx} cy={sy} r={R} fill="none" stroke={c} strokeWidth={5} strokeLinecap="round"
+          strokeDasharray={dashed ? '14 12' : `${C * d} ${C}`} opacity={dashed ? d : 1} transform={`rotate(-90 ${sx} ${sy})`} />
+      </svg>
+      {label ? <div style={{position: 'absolute', left: sx, top: sy - R - 18, transform: `translate(-50%,-100%) scale(${0.7 + lp * 0.3})`, opacity: lp}}><Tag text={label} tone="accent" /></div> : null}
+    </AbsoluteFill>
+  );
+};
+
+/** Dashed measuring line between two world points, drawn progressively, with a label in the middle. */
+export const Measure: React.FC<{from: [number, number]; to: [number, number]; label?: string; delay?: number}> = ({from, to, label, delay = 6}) => {
+  const b = useBrand();
+  const {toScreen} = useCam();
+  const d = useReveal(delay, 26);
+  const lp = useReveal(delay + 20, 14);
+  const [ax, ay] = toScreen(from), [bx, by] = toScreen(to);
+  const ex = ax + (bx - ax) * d, ey = ay + (by - ay) * d;
+  return (
+    <AbsoluteFill>
+      <svg width={1080} height={1920} style={{position: 'absolute', left: 0, top: 0, overflow: 'visible'}}>
+        <line x1={ax} y1={ay} x2={ex} y2={ey} stroke={ink(b)} strokeWidth={4} strokeDasharray="12 10" strokeLinecap="round" />
+        <circle cx={ax} cy={ay} r={9} fill={b.colors.accent} stroke="#fff" strokeWidth={3} />
+        {d > 0.98 ? <circle cx={bx} cy={by} r={9} fill={b.colors.accent} stroke="#fff" strokeWidth={3} /> : null}
+      </svg>
+      {label ? <div style={{position: 'absolute', left: (ax + bx) / 2, top: (ay + by) / 2, transform: `translate(-50%,-50%) scale(${0.7 + lp * 0.3})`, opacity: lp}}><Tag text={label} /></div> : null}
+    </AbsoluteFill>
+  );
+};
+
+/** Dims everything except a circle around a world point: pulls the eye to one place. */
+export const Spotlight: React.FC<{at: [number, number]; r: number; dim?: number; delay?: number}> = ({at, r, dim = 0.45, delay = 0}) => {
+  const {toScreen, zoom} = useCam();
+  const d = useReveal(delay, 20);
+  const [sx, sy] = toScreen(at);
+  const R = r * zoom;
+  return <AbsoluteFill style={{background: `radial-gradient(circle at ${sx}px ${sy}px, transparent ${R}px, rgba(15,22,35,${dim * d}) ${R + 3}px)`}} />;
+};
+
+/** Colored stat box with a direction arrow, e.g. "◀ ovest 50%". Screen-space: give x, y (center). */
+export const Badge: React.FC<{value: string; label?: string; x: number; y: number; color?: string; arrow?: 'left' | 'right' | 'up' | 'down'; delay?: number}> = ({value, label, x, y, color, arrow, delay = 8}) => {
+  const b = useBrand();
+  const p = usePop(delay, 14);
+  const ar = arrow ? {left: '◀ ', right: '', up: '▲ ', down: '▼ '}[arrow] : '';
+  return (
+    <div style={{position: 'absolute', left: x, top: y, transform: `translate(-50%,-50%) scale(${p})`, background: color || ink(b), color: '#fff', borderRadius: 18, padding: '12px 22px', fontFamily: sans, textAlign: 'center', boxShadow: SHADOW, minWidth: 130}}>
+      {label ? <div style={{fontSize: 22, fontWeight: 600, opacity: 0.9}}>{ar}{label}{arrow === 'right' ? ' ▶' : ''}</div> : null}
+      <div style={{fontSize: 54, fontWeight: 800, letterSpacing: -1, lineHeight: 1.05, fontVariantNumeric: 'tabular-nums'}}>{value}</div>
+    </div>
+  );
+};
+
+/** White card with a counting number and a label. Screen-space at x, y (center). */
+export const StatCard: React.FC<{value: number; prefix?: string; suffix?: string; decimals?: number; label: string; x?: number; y?: number; w?: number; delay?: number}> = ({value, prefix = '', suffix = '', decimals = 0, label, x = 540, y = 1000, w = 640, delay = 6}) => {
+  const b = useBrand();
+  const f = useF();
+  const p = usePop(delay, 15);
+  const v = interpolate(f, [delay + 4, delay + 40], [0, value], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic)});
+  return (
+    <div style={{position: 'absolute', left: x, top: y, width: w, transform: `translate(-50%,-50%) translateY(${(1 - p) * 60}px)`, opacity: Math.min(1, p * 1.4), background: b.colors.card || '#fff', borderRadius: 36, padding: '34px 40px', boxShadow: SHADOW, textAlign: 'center'}}>
+      <div style={{fontFamily: displayOf(b), fontSize: 150, fontWeight: 600, color: b.colors.accent, letterSpacing: -4, lineHeight: 1, fontVariantNumeric: 'tabular-nums'}}>{prefix}{v.toLocaleString('it-IT', {minimumFractionDigits: decimals, maximumFractionDigits: decimals})}{suffix}</div>
+      <div style={{fontFamily: sans, fontSize: 36, fontWeight: 600, color: ink(b), marginTop: 12, lineHeight: 1.2}}><Rich text={label} /></div>
+    </div>
+  );
+};
+
+/**
+ * White card with an animated chart. type: line (draws left to right, area under it) | bar (bars grow).
+ * data: numbers; labels: x-axis labels (first and last are shown for line, all for bar); highlight: index to color with the accent.
+ */
+export const ChartCard: React.FC<{type?: 'line' | 'bar'; data: number[]; labels?: string[]; title?: string; unit?: string; highlight?: number; x?: number; y?: number; w?: number; h?: number; delay?: number; baseline?: number}> = ({type = 'line', data, labels = [], title, unit = '', highlight, x = 540, y = 1000, w = 900, h = 520, delay = 6, baseline}) => {
+  const b = useBrand();
+  const p = usePop(delay, 16);
+  const d = useReveal(delay + 8, 40);
+  const pad = {l: 40, r: 40, t: title ? 90 : 40, b: 70};
+  const W = w - pad.l - pad.r, H = h - pad.t - pad.b;
+  const max = Math.max(...data, baseline ?? -Infinity) * 1.08, min = Math.min(0, ...data);
+  const X = (i: number) => pad.l + (data.length === 1 ? W / 2 : (i / (data.length - 1)) * W);
+  const Y = (v: number) => pad.t + H - ((v - min) / (max - min || 1)) * H;
+  const pts = data.map((v, i) => [X(i), Y(v)] as [number, number]);
+  const line = pts.map((q, i) => `${i ? 'L' : 'M'}${q[0].toFixed(1)},${q[1].toFixed(1)}`).join(' ');
+  const area = `${line} L${X(data.length - 1)},${Y(min)} L${X(0)},${Y(min)} Z`;
+  const last = Math.max(0, Math.min(data.length - 1, Math.floor(d * (data.length - 1))));
+  const bw = (W / data.length) * 0.62;
+  return (
+    <div style={{position: 'absolute', left: x, top: y, width: w, height: h, transform: `translate(-50%,-50%) translateY(${(1 - p) * 60}px)`, opacity: Math.min(1, p * 1.4), background: b.colors.card || '#fff', borderRadius: 32, boxShadow: SHADOW, overflow: 'hidden'}}>
+      {title ? <div style={{position: 'absolute', left: pad.l, top: 30, fontFamily: sans, fontSize: 32, fontWeight: 700, color: ink(b)}}><Rich text={title} /></div> : null}
+      <svg width={w} height={h} style={{position: 'absolute', left: 0, top: 0}}>
+        <defs>
+          <linearGradient id="rs-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={b.colors.accent} stopOpacity={0.28} /><stop offset="1" stopColor={b.colors.accent} stopOpacity={0} /></linearGradient>
+          <clipPath id="rs-clip"><rect x={0} y={0} width={pad.l + W * d + 2} height={h} /></clipPath>
+        </defs>
+        <line x1={pad.l} x2={pad.l + W} y1={Y(min)} y2={Y(min)} stroke={b.colors.muted} strokeOpacity={0.4} strokeWidth={2} />
+        {baseline !== undefined ? <line x1={pad.l} x2={pad.l + W} y1={Y(baseline)} y2={Y(baseline)} stroke={b.colors.muted} strokeDasharray="8 8" strokeWidth={2} /> : null}
+        {type === 'line' ? (
+          <g clipPath="url(#rs-clip)">
+            <path d={area} fill="url(#rs-area)" />
+            <path d={line} fill="none" stroke={b.colors.accent} strokeWidth={6} strokeLinejoin="round" strokeLinecap="round" />
+          </g>
+        ) : data.map((v, i) => {
+          const g = Math.max(0, Math.min(1, d * data.length - i * 0.6));
+          const top = Y(min) - (Y(min) - Y(v)) * g;
+          return <rect key={i} x={X(i) - bw / 2 + (data.length === 1 ? 0 : 0)} y={top} width={bw} height={Y(min) - top} rx={10} fill={highlight === i ? b.colors.accent : `${ink(b)}`} opacity={highlight === undefined || highlight === i ? 1 : 0.28} />;
+        })}
+        {type === 'line' ? <circle cx={pts[last][0]} cy={pts[last][1]} r={11} fill={b.colors.accent} stroke="#fff" strokeWidth={4} /> : null}
+      </svg>
+      {type === 'line' && d > 0.95 ? <div style={{position: 'absolute', left: pts[data.length - 1][0], top: pts[data.length - 1][1] - 22, transform: 'translate(-100%,-100%)', fontFamily: sans, fontWeight: 800, fontSize: 34, color: b.colors.accent}}>{data[data.length - 1].toLocaleString('it-IT')}{unit}</div> : null}
+      {(type === 'line' ? [0, labels.length - 1] : labels.map((_, i) => i)).filter((i) => labels[i] !== undefined).map((i) => (
+        <div key={i} style={{position: 'absolute', top: h - pad.b + 18, left: type === 'line' ? (i === 0 ? pad.l : pad.l + W) : X(i), transform: type === 'line' ? (i === 0 ? 'none' : 'translateX(-100%)') : 'translateX(-50%)', fontFamily: sans, fontSize: 24, fontWeight: 600, color: b.colors.muted}}>{labels[i]}</div>
+      ))}
+    </div>
+  );
+};
+
+/** A row of round white "lenses", each framing an image or any node, with a label; one can be highlighted. Screen-space. */
+export const Lenses: React.FC<{items: {src?: string; node?: React.ReactNode; label?: string; highlight?: boolean}[]; y?: number; size?: number; delay?: number; stagger?: number}> = ({items, y = 1000, size = 230, delay = 6, stagger = 5}) => {
+  const b = useBrand();
+  const f = useF();
+  const {fps} = useVideoConfig();
+  const gap = Math.min(40, (1000 - items.length * size) / Math.max(1, items.length - 1));
+  const total = items.length * size + (items.length - 1) * gap;
+  return (
+    <AbsoluteFill>
+      {items.map((it, i) => {
+        const p = spring({frame: f - delay - i * stagger, fps, config: {damping: 13, mass: 0.8}});
+        const s = it.highlight ? size * 1.18 : size;
+        const cx = 540 - total / 2 + i * (size + gap) + size / 2;
+        const cy = y + Math.sin(i * 1.7) * 30;
+        return (
+          <div key={i} style={{position: 'absolute', left: cx, top: cy, transform: `translate(-50%,-50%) translateY(${(1 - p) * 120}px) scale(${0.5 + p * 0.5})`, opacity: Math.min(1, p * 1.5), display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14}}>
+            <div style={{width: s, height: s, borderRadius: '50%', background: b.colors.card || '#fff', boxShadow: SHADOW, overflow: 'hidden', border: `${it.highlight ? 8 : 6}px solid ${it.highlight ? b.colors.accent : '#fff'}`, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+              {it.src ? <Img src={staticFile(it.src)} style={{width: '100%', height: '100%', objectFit: 'cover'}} /> : it.node}
+            </div>
+            {it.label ? <Tag text={it.label} size={26} tone={it.highlight ? 'accent' : 'light'} /> : null}
+          </div>
+        );
+      })}
+    </AbsoluteFill>
+  );
+};
+
+/** Small source line at the bottom of the content area ("Fonte: ISTAT 2025"). Facts need a source. */
+export const Source: React.FC<{text: string; y?: number}> = ({text, y = 1180}) => {
+  const b = useBrand();
+  const o = useReveal(10, 14);
+  return (
+    <AbsoluteFill style={{top: y, height: 'auto', bottom: 'auto', left: 70, right: 70, width: 'auto', display: 'flex', alignItems: 'center', opacity: o}}>
+      <div style={{width: 'fit-content', maxWidth: '100%', padding: '8px 18px', borderRadius: 14, background: `${b.colors.bg1}E6`, fontFamily: sans, fontSize: 24, fontWeight: 500, color: b.colors.muted, textAlign: 'center', lineHeight: 1.3}}>{text}</div>
+    </AbsoluteFill>
+  );
+};
+
+/** An SVG icon downloaded with `rs icon` (assets/icons/<name>.svg), tinted, any size. Crisp at any zoom. */
+export const SvgIcon: React.FC<{name: string; size?: number; color?: string; stroke?: number; style?: React.CSSProperties}> = ({name, size = 120, color, stroke = 2, style}) => {
+  const b = useBrand();
+  const [svg, setSvg] = React.useState<string | null>(null);
+  const [h] = React.useState(() => delayRender('icon ' + name));
+  React.useEffect(() => {
+    fetch(staticFile(`icons/${name}.svg`)).then((r) => r.text()).then((t) => { setSvg(t); continueRender(h); }).catch(() => continueRender(h));
+  }, [name, h]);
+  if (!svg) return <div style={{width: size, height: size, ...style}} />;
+  const html = svg.replace(/width="[^"]*"/, `width="${size}"`).replace(/height="[^"]*"/, `height="${size}"`).replace(/stroke="currentColor"/g, `stroke="${color || ink(b)}"`).replace(/stroke-width="[^"]*"/g, `stroke-width="${stroke}"`);
+  return <div style={{width: size, height: size, lineHeight: 0, ...style}} dangerouslySetInnerHTML={{__html: html}} />;
+};

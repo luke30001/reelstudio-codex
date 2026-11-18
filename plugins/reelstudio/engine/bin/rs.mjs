@@ -136,6 +136,18 @@ async function brandProps(reelDirPath, brandId) {
         out.font = `"${look.font.family}", ${look.font.fallback || '-apple-system, sans-serif'}`;
       } catch (e) { console.error('  (font: ' + e.message + ')'); }
     }
+    // optional headline font (e.g. a serif), loaded the same way
+    if (look.display?.family) {
+      try {
+        const fam = look.display.family, files = await ensureFont(fam, look.display.weights || [500, 600, 700]);
+        fs.mkdirSync(path.join(la, 'fonts', 'display'), {recursive: true});
+        out.fontFiles = [...(out.fontFiles || []), ...files.map((x) => {
+          fs.copyFileSync(path.join(HOME, 'fonts', fam.replace(/\s+/g, '_'), x.file), path.join(la, 'fonts', 'display', x.file));
+          return {family: x.family, weight: x.weight, src: 'look/fonts/display/' + x.file};
+        })];
+        out.display = `"${fam}", ${look.display.fallback || 'Georgia, serif'}`;
+      } catch (e) { console.error('  (display font: ' + e.message + ')'); }
+    }
   }
   return out;
 }
@@ -381,6 +393,8 @@ async function bundleReel(d) {
 
 async function prep(slug) {
   const d = reelDir(slug);
+  // Remotion caches its headless Chrome under <cwd>/node_modules/.remotion: keep it inside the engine, not wherever rs was launched
+  process.chdir(ENGINE);
   const timeline = readJSON(path.join(d, 'timeline.json'));
   const reel = readJSON(path.join(d, 'reel.json'));
   const brand = await brandProps(d, reel.brand);
@@ -406,6 +420,39 @@ async function cmdFrames(pos, flags) {
     await R.renderStill({composition: comp, serveUrl, inputProps, frame: s.frame, output: path.join(out, s.name + '.png'), scale: 0.5});
   }
   log(`✓ ${shots.length} frames in ${out} (half-res). Look at every one.`);
+  if (flags.strip && !at) {
+    // one contact sheet per scene: 5 moments side by side, to judge camera moves and timing
+    const tmp = path.join(out, '.strip');
+    fs.mkdirSync(tmp, {recursive: true});
+    for (const s of timeline.scenes) {
+      const fr = [0, 0.15, 0.35, 0.6, 0.9].map((t) => s.from + Math.min(s.duration - 1, Math.round(t * s.duration)));
+      const files = [];
+      for (const [i, frame] of fr.entries()) {
+        const f = path.join(tmp, `${s.id}-${i}.png`);
+        await R.renderStill({composition: comp, serveUrl, inputProps, frame, output: f, scale: 0.25});
+        files.push(f);
+      }
+      execFileSync('ffmpeg', ['-loglevel', 'error', '-y', ...files.flatMap((f) => ['-i', f]), '-filter_complex', `hstack=inputs=${files.length}`, path.join(out, `${s.id}-strip.png`)]);
+    }
+    fs.rmSync(tmp, {recursive: true, force: true});
+    log(`✓ ${timeline.scenes.length} strips (<id>-strip.png: 0%, 15%, 35%, 60%, 90% of each scene) to judge the motion.`);
+  }
+}
+
+/** Download Lucide icons (ISC license) as SVG into the reel: assets/icons/<name>.svg, used with <SvgIcon name=…>. */
+async function cmdIcon(pos) {
+  const d = reelDir(pos[0]);
+  const names = pos.slice(1);
+  if (!names.length) die('usage: rs icon <reel> <name> [name…]   (names from https://lucide.dev/icons, e.g. map-pin coffee train)');
+  const dir = path.join(d, 'assets', 'icons');
+  fs.mkdirSync(dir, {recursive: true});
+  for (const n of names) {
+    if (!/^[a-z0-9-]+$/.test(n)) die('bad icon name: ' + n);
+    const r = await fetch(`https://cdn.jsdelivr.net/npm/lucide-static@1.75.0/icons/${n}.svg`);
+    if (!r.ok) { console.error(`✗ ${n}: not found (see https://lucide.dev/icons)`); continue; }
+    fs.writeFileSync(path.join(dir, n + '.svg'), await r.text());
+    log(`✓ icons/${n}.svg`);
+  }
 }
 
 async function cmdRender(pos) {
@@ -461,7 +508,7 @@ const {pos, flags} = args(rest);
 const needEngine = ['frames', 'render'];
 if (needEngine.includes(cmd) && !fs.existsSync(path.join(ENGINE, 'node_modules', 'remotion'))) die('run `rs setup` first');
 const table = {setup, new: () => cmdNew(pos, flags), voice: () => cmdVoice(pos, flags), image: () => cmdImage(pos, flags),
-  frames: () => cmdFrames(pos, flags), render: () => cmdRender(pos), models: cmdModels, list: cmdList,
+  frames: () => cmdFrames(pos, flags), render: () => cmdRender(pos), models: cmdModels, list: cmdList, icon: () => cmdIcon(pos),
   'look-image': () => cmdLookImage(pos, flags), 'install-app': installApp, brand: async () => log(JSON.stringify(await brandProps(reelDir(pos[0]), readJSON(path.join(reelDir(pos[0]), 'reel.json')).brand), null, 2)),
   app: () => import(path.join(HOME, 'app', 'server.mjs'))};
 if (!table[cmd]) {
@@ -473,7 +520,8 @@ if (!table[cmd]) {
   look-image <look> <name> "<prompt>" [--mascot] [--hero]
   app                            start the ReelStudio app (http://localhost:4747)
   install-app                    create ~/Applications/ReelStudio.app
-  frames <reel> [--at frame]     render check stills to <reel>/frames
+  icon <reel> <name> [name…]     download Lucide SVG icons into <reel>/assets/icons
+  frames <reel> [--at frame] [--strip]   check stills to <reel>/frames (--strip: motion sheet per scene)
   render <reel>                  final.mp4 + cover.png
   models                         current picks + live OpenRouter catalog
   list                           reels and brands`);
