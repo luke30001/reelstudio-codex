@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2088  # "~/..." in messages is meant literally
 # ReelStudio for Codex: installer (macOS).
 #   git clone https://github.com/luke30001/reelstudio-codex.git && cd reelstudio-codex && ./install.sh
 # The only credential is your OpenRouter key: in a terminal it asks for it hidden and saves it in ~/ReelStudio/.env (chmod 600).
@@ -12,9 +13,25 @@ warn() { printf '! %s\n' "$1"; }
 has() { command -v "$1" >/dev/null 2>&1; }
 
 [ "$(uname)" = "Darwin" ] || warn "ReelStudio is built for macOS; other systems are untested."
-has codex || { echo "✗ Codex CLI not found (https://developers.openai.com/codex)"; exit 1; }
-has node || { echo "✗ Node.js 20+ is required (brew install node)"; exit 1; }
-has ffmpeg || warn "ffmpeg is missing: install it with 'brew install ffmpeg' (needed for audio and the render)."
+has codex || { echo "✗ Codex CLI not found: install it from https://developers.openai.com/codex and sign in, then run ./install.sh again"; exit 1; }
+
+# Node.js 20+ and ffmpeg: offered through Homebrew when missing
+need=""
+if has node; then
+  NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+  [ "$NODE_MAJOR" -ge 20 ] || need="$need node"
+else need="$need node"; fi
+has ffmpeg || need="$need ffmpeg"
+if [ -n "$need" ]; then
+  if has brew && [ -t 0 ]; then
+    printf 'ReelStudio needs:%s. Install with Homebrew now? [Y/n] ' "$need"; read -r yn
+    case "$yn" in [nN]*) echo "✗ Install them yourself:  brew install$need"; exit 1;; esac
+    for f in $need; do if has "$f"; then brew upgrade "$f" || true; else brew install "$f"; fi; done
+  else
+    echo "✗ Missing:$need. Install them (with Homebrew: brew install$need) and run ./install.sh again"; exit 1
+  fi
+fi
+ok "Node.js $(node -p 'process.versions.node') and ffmpeg"
 
 # 1. plugin, from the GitHub marketplace
 if codex plugin marketplace list 2>/dev/null | grep -q '^reelstudio '; then
@@ -46,6 +63,8 @@ elif [ -t 0 ] && [ -t 1 ]; then
 else
   KEYMSG="Open the Terminal app and run:  reelstudio key   (it asks for your OpenRouter key without showing it; never paste it into a chat)"
 fi
+
+echo; "$HOME/.local/bin/reelstudio" doctor || true
 
 APP=$(ls -d "$HOME"/.codex/plugins/cache/reelstudio/reelstudio/*/app-codex 2>/dev/null | sort -V | tail -1)
 cat <<EOF

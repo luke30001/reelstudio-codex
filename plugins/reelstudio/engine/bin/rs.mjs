@@ -68,11 +68,16 @@ function probeSeconds(file) {
 
 async function orFetch(endpoint, body, {raw = false} = {}) {
   if (!KEY()) die(`OPENROUTER_API_KEY not set. Put it in ${path.join(HOME, '.env')} as OPENROUTER_API_KEY=sk-or-...`);
-  const res = await fetch(OR + endpoint, {
-    method: 'POST',
-    headers: {Authorization: `Bearer ${KEY()}`, 'Content-Type': 'application/json', 'X-Title': 'ReelStudio'},
-    body: JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetch(OR + endpoint, {
+      method: 'POST',
+      headers: {Authorization: `Bearer ${KEY()}`, 'Content-Type': 'application/json', 'X-Title': 'ReelStudio'},
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    die(`cannot reach openrouter.ai (${e.cause?.code || e.message}). The network is blocked, most likely by the agent sandbox: run this same command again with network access (escalated permissions). Do NOT switch to --local: that is the robotic macOS draft voice.`);
+  }
   if (!res.ok) throw new Error(`${endpoint} ${res.status}: ${(await res.text()).slice(0, 500)}`);
   return raw ? Buffer.from(await res.arrayBuffer()) : res.json();
 }
@@ -184,7 +189,7 @@ function setup() {
   });
   if (!fs.existsSync(path.join(HOME, '.env'))) fs.writeFileSync(path.join(HOME, '.env'), '# OPENROUTER_API_KEY=sk-or-...\n', {mode: 0o600});
   log(`✓ ReelStudio ready in ${HOME}`);
-  log(KEY() ? '✓ OpenRouter key found' : `! No OpenRouter key: voice falls back to macOS "say", images are off. Add it to ${path.join(HOME, '.env')}`);
+  log(KEY() ? '✓ OpenRouter key found' : `! No OpenRouter key: voice and images are off until the user runs  reelstudio key  (or adds it to ${path.join(HOME, '.env')})`);
 }
 
 // ---------- macOS launcher ----------
@@ -237,13 +242,14 @@ function cmdNew(pos, flags) {
 // ---------- voice ----------
 async function ttsScene(text, brand, m, outMp3, flags) {
   const model = flags.model || brand.voice?.model || m.tts[flags.tier || 'model'] || m.tts.model;
-  if (!KEY() || flags.local) {
+  if (flags.local) {
     const aiff = outMp3.replace(/\.mp3$/, '.aiff');
     execFileSync('say', ['-v', brand.sayVoice || 'Alice', '-o', aiff, text]);
     execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', aiff, '-ar', '44100', '-b:a', '192k', outMp3]);
     fs.rmSync(aiff);
     return 'macOS say';
   }
+  if (!KEY()) die(`No OpenRouter key, so no real voice. The user sets it in their own Terminal with: reelstudio key (or OPENROUTER_API_KEY=… in ${path.join(HOME, '.env')}). The macOS draft voice is used only with --local, when the user asks for it.`);
   const body = {model, input: text, response_format: 'mp3'};
   // brand.voice.voices: {model: voice}. brand.voice.voice applies to brand.voice.model, or to ElevenLabs if no model is set (older brands)
   const bv = brand.voice || {};
@@ -311,22 +317,24 @@ async function cmdVoice(pos, flags) {
     if (!s.id || !s.voiceover) die('every scene needs id and voiceover');
     const file = path.join(vo, s.id + '.mp3');
     const prev = old.scenes.find((x) => x.id === s.id);
-    let words = prev?.words, secs;
+    let words = prev?.words, secs, via = prev?.via;
     const stale = !fs.existsSync(file) || prev?.voiceover !== s.voiceover || (only && only.has(s.id)) || flags.force;
     if (stale) {
-      const via = await ttsScene(s.voiceover, brand, m, file, flags);
+      via = await ttsScene(s.voiceover, brand, m, file, flags);
       secs = probeSeconds(file);
       words = alignWords(s.voiceover, await wordTimes(file, brand.language || 'it', m), secs);
       log(`  ${s.id}: ${secs.toFixed(2)}s via ${via}`);
     } else secs = probeSeconds(file);
     const hold = s.hold ?? 0.25;
     const duration = Math.ceil((secs + hold) * FPS);
-    scenes.push({id: s.id, from, duration, audio: `vo/${s.id}.mp3`, voiceover: s.voiceover,
+    scenes.push({id: s.id, from, duration, audio: `vo/${s.id}.mp3`, voiceover: s.voiceover, via,
       words: words.map((w) => ({text: w.text, start: Math.round(w.start * FPS), end: Math.max(Math.round(w.end * FPS), Math.round(w.start * FPS) + 2)}))});
     from += duration;
   }
   writeJSON(path.join(d, 'timeline.json'), {fps: FPS, width: 1080, height: 1920, total: from, scenes});
   log(`✓ timeline: ${scenes.length} scenes, ${(from / FPS).toFixed(1)}s`);
+  const draft = scenes.filter((s) => s.via === 'macOS say').map((s) => s.id);
+  if (draft.length) log(`! draft macOS voice in: ${draft.join(', ')}. render refuses it unless --draft-voice; redo with: voice ${pos[0]} --scene ${draft.join(',')} --force`);
 }
 
 // ---------- image ----------
@@ -583,6 +591,9 @@ async function cmdIcon(pos) {
 }
 
 async function cmdRender(pos, flags = {}) {
+  const tl = readJSON(path.join(reelDir(pos[0]), 'timeline.json'), {scenes: []});
+  const draft = tl.scenes.filter((s) => s.via === 'macOS say').map((s) => s.id);
+  if (draft.length && !flags['draft-voice']) die(`scenes ${draft.join(', ')} use the robotic macOS draft voice. Regenerate them: voice ${pos[0]} --scene ${draft.join(',')} --force (needs the OpenRouter key and network access). Only if the user explicitly wants a draft: render --draft-voice`);
   const {d, R, serveUrl, inputProps} = await prep(pos[0]);
   const comp = await R.selectComposition({serveUrl, id: 'Reel', inputProps});
   const outDir = path.join(d, 'out');
@@ -653,7 +664,7 @@ if (!table[cmd]) {
   log(`rs — ReelStudio
   setup                          install engine into ${HOME}
   new "<topic>" [--brand b]      create a reel, prints its name
-  voice <reel> [--scene id] [--local] [--tier budget|expressive] [--force]
+  voice <reel> [--scene id] [--voice Charon] [--tier eleven|native|budget] [--force] [--local = macOS draft voice, only on request]
   image <reel> <name> "<prompt>" [--hero] [--world] [--res 2K|4K] [--aspect 1:1] [--mascot] [--ref img/x.png] [--no-style]
   look-image <look> <name> "<prompt>" [--mascot] [--hero]
   app                            start the ReelStudio app (http://localhost:4747)

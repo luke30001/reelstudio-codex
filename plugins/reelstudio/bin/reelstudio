@@ -1,12 +1,36 @@
 #!/bin/sh
+# shellcheck disable=SC2088  # "~/..." in messages is meant literally
 # ReelStudio CLI launcher for the Codex plugin.
-# `reelstudio setup` installs/updates the engine in ~/ReelStudio from the newest installed plugin version;
-# every other command runs the engine in ~/ReelStudio.
+#   reelstudio setup     install/update the engine in ~/ReelStudio from the newest installed plugin version
+#   reelstudio update    pull the latest plugin from GitHub, reinstall it and refresh the engine
+#   reelstudio doctor    check that everything ReelStudio needs is in place
+#   reelstudio key       set the OpenRouter key (hidden prompt, saved in ~/ReelStudio/.env, chmod 600)
+#   reelstudio version   installed versions
+# Every other command runs the engine in ~/ReelStudio (reelstudio help lists them).
 HOME_RS="${REELSTUDIO_HOME:-$HOME/ReelStudio}"
+CACHE="$HOME/.codex/plugins/cache/reelstudio/reelstudio"
 
-# `reelstudio key`: type the OpenRouter key in YOUR terminal (hidden), saved to ~/ReelStudio/.env (chmod 600).
-# The key never goes through a chat or an agent.
-if [ "$1" = "key" ]; then
+newest_plugin() { ls -d "$CACHE"/*/ 2>/dev/null | sed 's:/$::' | sort -V | tail -1; }
+plugin_version() { p=$(newest_plugin); [ -n "$p" ] && basename "$p"; }
+engine_version() { [ -f "$HOME_RS/engine/.plugin-version" ] && cat "$HOME_RS/engine/.plugin-version"; }
+
+find_src() {
+  p=$(newest_plugin)
+  [ -n "$p" ] && [ -f "$p/engine/bin/rs.mjs" ] && { echo "$p/engine"; return; }
+  here=$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)   # running from a git checkout
+  [ -f "$here/engine/bin/rs.mjs" ] && echo "$here/engine"
+}
+
+run_setup() {
+  SRC=$(find_src)
+  [ -z "$SRC" ] && { echo "✗ ReelStudio Codex plugin not found: run install.sh first"; exit 1; }
+  node "$SRC/bin/rs.mjs" setup || exit 1
+  v=$(basename "$(dirname "$SRC")")
+  [ -d "$HOME_RS/engine" ] && printf '%s\n' "$v" > "$HOME_RS/engine/.plugin-version"
+}
+
+case "$1" in
+key)
   if [ ! -t 0 ]; then
     echo "✗ Run this yourself in a Terminal window: reelstudio key   (it asks for the key without showing it)"; exit 1
   fi
@@ -22,20 +46,77 @@ if [ "$1" = "key" ]; then
   printf 'OPENROUTER_API_KEY=%s\n' "$KEY" >> "$ENV.tmp"
   mv "$ENV.tmp" "$ENV"; chmod 600 "$ENV"
   echo "✓ Key saved in $ENV (only your user can read it)"
+  exit 0;;
+
+setup)
+  run_setup; exit 0;;
+
+update)
+  command -v codex >/dev/null 2>&1 || { echo "✗ Codex CLI not found"; exit 1; }
+  before=$(plugin_version)
+  out=$(codex plugin marketplace upgrade reelstudio 2>&1); rc=$?
+  if [ $rc -ne 0 ]; then
+    case "$out" in
+      *"not configured as a Git marketplace"*) echo "· local marketplace: reinstalling from its folder";;
+      *) printf '%s\n' "$out"; echo "✗ could not update the reelstudio marketplace (offline?)"; exit 1;;
+    esac
+  fi
+  codex plugin add reelstudio@reelstudio || exit 1
+  after=$(plugin_version)
+  p=$(newest_plugin)
+  if [ -n "$p" ] && [ -f "$p/bin/reelstudio" ] && [ "$p/bin/reelstudio" != "$0" ]; then
+    cp "$p/bin/reelstudio" "$HOME/.local/bin/reelstudio.new" 2>/dev/null && chmod +x "$HOME/.local/bin/reelstudio.new" \
+      && mv "$HOME/.local/bin/reelstudio.new" "$HOME/.local/bin/reelstudio"
+  fi
+  run_setup
+  if [ "$before" = "$after" ]; then echo "✓ ReelStudio is up to date ($after)"; else echo "✓ ReelStudio updated: ${before:-none} → $after. Restart Codex to load the new skill."; fi
+  exit 0;;
+
+version|--version|-v)
+  echo "plugin  $(plugin_version || echo 'not installed')"
+  echo "engine  $(engine_version || echo 'not set up')  ($HOME_RS/engine)"
+  exit 0;;
+
+doctor)
+  bad=0
+  ok() { printf '  ✓ %s\n' "$1"; }
+  no() { printf '  ✗ %s\n' "$1"; bad=$((bad+1)); }
+  meh() { printf '  ! %s\n' "$1"; }
+  echo "ReelStudio doctor"
+  if command -v node >/dev/null 2>&1; then
+    nv=$(node -p 'process.versions.node' 2>/dev/null); nm=${nv%%.*}
+    [ "${nm:-0}" -ge 20 ] 2>/dev/null && ok "Node.js $nv" || no "Node.js $nv is too old: need 20+ (brew upgrade node)"
+  else no "Node.js missing (brew install node)"; fi
+  command -v ffmpeg >/dev/null 2>&1 && ok "ffmpeg" || no "ffmpeg missing (brew install ffmpeg)"
+  command -v codex >/dev/null 2>&1 && ok "Codex CLI $(codex --version 2>/dev/null | tail -1)" || no "Codex CLI missing (https://developers.openai.com/codex)"
+  pv=$(plugin_version); [ -n "$pv" ] && ok "plugin reelstudio@reelstudio $pv" || no "plugin not installed: run install.sh"
+  if [ -f "$HOME_RS/engine/bin/rs.mjs" ] && [ -d "$HOME_RS/engine/node_modules/remotion" ]; then
+    ev=$(engine_version)
+    if [ -n "$pv" ] && [ -n "$ev" ] && [ "$ev" != "$pv" ]; then meh "engine is $ev but plugin is $pv: run  reelstudio setup"
+    else ok "engine and Remotion in $HOME_RS/engine"; fi
+  else no "engine not set up: run  reelstudio setup"; fi
+  if grep -q '^OPENROUTER_API_KEY=sk-or-' "$HOME_RS/.env" 2>/dev/null; then
+    perm=$(stat -f '%Lp' "$HOME_RS/.env" 2>/dev/null || stat -c '%a' "$HOME_RS/.env" 2>/dev/null)
+    [ "$perm" = "600" ] && ok "OpenRouter key set (file readable only by you)" || meh "OpenRouter key set, but $HOME_RS/.env is $perm: run  chmod 600 $HOME_RS/.env"
+    if command -v curl >/dev/null 2>&1; then
+      code=$( (printf 'header = "Authorization: Bearer '; sed -n 's/^OPENROUTER_API_KEY=//p' "$HOME_RS/.env" | head -1 | tr -d '\r\n'; printf '"\n') \
+        | curl -s -o /dev/null -w '%{http_code}' -m 10 -K - https://openrouter.ai/api/v1/key)
+      case "$code" in 200) ok "OpenRouter accepts the key";; 401|403) no "OpenRouter rejects the key: run  reelstudio key";; *) meh "could not reach OpenRouter (HTTP $code)";; esac
+    fi
+  else meh "no OpenRouter key: voice falls back to macOS 'say' and images are off (run  reelstudio key)"; fi
+  case ":$PATH:" in *":$HOME/.local/bin:"*) ok "~/.local/bin is on PATH";; *) meh "~/.local/bin is not on PATH: add  export PATH=\"\$HOME/.local/bin:\$PATH\"  to ~/.zshrc";; esac
+  [ -d "$HOME/Library/Caches" ] && df -g "$HOME" 2>/dev/null | awk 'NR==2 && $4<3 {exit 1}' || meh "less than 3 GB free on disk: renders may fail"
+  [ "$bad" -eq 0 ] && echo "All good." || echo "$bad problem(s) to fix."
+  exit "$bad";;
+esac
+
+if [ ! -f "$HOME_RS/engine/bin/rs.mjs" ]; then run_setup; fi
+if [ "$1" = "help" ] || [ -z "$1" ]; then
+  node "$HOME_RS/engine/bin/rs.mjs"
+  echo "  update                         get the latest plugin from GitHub and refresh the engine
+  doctor                         check Node, ffmpeg, Codex, plugin, engine and key
+  key                            set the OpenRouter key (hidden prompt)
+  version                        installed versions"
   exit 0
-fi
-
-find_src() {
-  found=$(ls -d "$HOME"/.codex/plugins/cache/reelstudio/reelstudio/*/engine 2>/dev/null | sort -V | tail -1)
-  [ -n "$found" ] && { echo "$found"; return; }
-  here=$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)   # running from a git checkout
-  [ -f "$here/engine/bin/rs.mjs" ] && echo "$here/engine"
-}
-
-if [ "$1" = "setup" ] || [ ! -f "$HOME_RS/engine/bin/rs.mjs" ]; then
-  SRC=$(find_src)
-  [ -z "$SRC" ] && { echo "✗ ReelStudio Codex plugin not found: run install.sh first"; exit 1; }
-  if [ "$1" = "setup" ]; then exec node "$SRC/bin/rs.mjs" "$@"; fi
-  node "$SRC/bin/rs.mjs" setup || exit 1
 fi
 exec node "$HOME_RS/engine/bin/rs.mjs" "$@"

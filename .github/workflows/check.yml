@@ -1,0 +1,36 @@
+name: check
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: JSON files parse
+        run: find . -name '*.json' -not -path './.git/*' -print0 | xargs -0 -n1 node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))'
+      - name: Engine and web app syntax
+        run: |
+          node --check plugins/reelstudio/engine/bin/rs.mjs
+          node --check plugins/reelstudio/app-codex/server.mjs
+      - name: Shell scripts
+        run: |
+          sh -n install.sh
+          sh -n plugins/reelstudio/bin/reelstudio
+          shellcheck -S warning install.sh plugins/reelstudio/bin/reelstudio
+      - name: Manifest and skill
+        run: |
+          node -e '
+            const p = require("./plugins/reelstudio/.codex-plugin/plugin.json");
+            const m = require("./.agents/plugins/marketplace.json");
+            if (!/^\d+\.\d+\.\d+$/.test(p.version)) throw new Error("bad version " + p.version);
+            if (!m.plugins.some((x) => x.name === p.name)) throw new Error("plugin missing from marketplace");
+            const s = require("fs").readFileSync("plugins/reelstudio/skills/reel/SKILL.md", "utf8");
+            if (!/^---\nname: /.test(s)) throw new Error("SKILL.md frontmatter missing");
+            if (!require("fs").readFileSync("CHANGELOG.md", "utf8").includes("## " + p.version)) throw new Error("CHANGELOG has no entry for " + p.version);
+          '
+      - name: Engine help runs
+        run: node plugins/reelstudio/engine/bin/rs.mjs | head -3
+      - name: No keys committed
+        run: "! grep -rIE 'sk-or-v1-[A-Za-z0-9]{20,}' --exclude-dir=.git ."
