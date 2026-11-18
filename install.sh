@@ -1,7 +1,7 @@
 #!/bin/sh
 # ReelStudio for Codex: installer (macOS).
 #   git clone https://github.com/luke30001/reelstudio-codex.git && cd reelstudio-codex && ./install.sh
-# It never touches API keys: put your OpenRouter key in ~/ReelStudio/.env yourself.
+# The only credential is your OpenRouter key: in a terminal it asks for it hidden and saves it in ~/ReelStudio/.env (chmod 600).
 set -e
 REPO="${REELSTUDIO_REPO:-luke30001/reelstudio-codex}"
 DIR=$(cd "$(dirname "$0")" && pwd)
@@ -35,14 +35,26 @@ case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) warn "~/.local/bin is not on you
 # 3. engine + Remotion into ~/ReelStudio (first run downloads Remotion with npm)
 "$HOME/.local/bin/reelstudio" setup
 
+# 4. the only credential: the OpenRouter key (voice, images, word timings). Asked hidden, only in a real terminal.
+if grep -q '^OPENROUTER_API_KEY=sk-or-' "$RS_HOME/.env" 2>/dev/null; then
+  ok "OpenRouter key already set"
+  KEYMSG="Key already set (change it any time with: reelstudio key)"
+elif [ -t 0 ] && [ -t 1 ]; then
+  echo; echo "ReelStudio needs one key: OpenRouter (create it at https://openrouter.ai/keys and add a few dollars of credit)."
+  "$HOME/.local/bin/reelstudio" key || warn "key not saved: run  reelstudio key  later"
+  KEYMSG="Change the key any time with: reelstudio key"
+else
+  KEYMSG="Open the Terminal app and run:  reelstudio key   (it asks for your OpenRouter key without showing it; never paste it into a chat)"
+fi
+
 APP=$(ls -d "$HOME"/.codex/plugins/cache/reelstudio/reelstudio/*/app-codex 2>/dev/null | sort -V | tail -1)
 cat <<EOF
 
 ReelStudio for Codex is installed.
 Next:
-  1. Put your OpenRouter key in $RS_HOME/.env as  OPENROUTER_API_KEY=sk-or-...  (never paste it into a chat).
-     Without it the voice uses macOS 'say' and images are off.
-  2. Open Codex and type:  /reel <your topic>
+  1. $KEYMSG
+     Without a key the voice uses macOS 'say' and images are off.
+  2. Restart Codex, then type:  /reel <your topic>
      Codex will ask before the first reelstudio command runs outside its sandbox (it needs the internet and Chrome).
   Optional web app:  node "$APP/server.mjs"   → http://localhost:4749
 EOF

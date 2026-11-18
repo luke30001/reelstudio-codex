@@ -4,6 +4,27 @@
 # every other command runs the engine in ~/ReelStudio.
 HOME_RS="${REELSTUDIO_HOME:-$HOME/ReelStudio}"
 
+# `reelstudio key`: type the OpenRouter key in YOUR terminal (hidden), saved to ~/ReelStudio/.env (chmod 600).
+# The key never goes through a chat or an agent.
+if [ "$1" = "key" ]; then
+  if [ ! -t 0 ]; then
+    echo "✗ Run this yourself in a Terminal window: reelstudio key   (it asks for the key without showing it)"; exit 1
+  fi
+  ENV="$HOME_RS/.env"
+  mkdir -p "$HOME_RS"
+  stty -echo; trap 'stty echo' EXIT INT TERM
+  printf 'OpenRouter API key (https://openrouter.ai/keys), hidden while you paste: '
+  IFS= read -r KEY; stty echo; printf '\n'
+  KEY=$(printf '%s' "$KEY" | tr -d '[:space:]')
+  case "$KEY" in sk-or-*) ;; *) echo "✗ That does not look like an OpenRouter key (it starts with sk-or-). Nothing saved."; exit 1;; esac
+  touch "$ENV"; chmod 600 "$ENV"
+  grep -v '^[[:space:]]*#\{0,1\}[[:space:]]*OPENROUTER_API_KEY=' "$ENV" > "$ENV.tmp" 2>/dev/null || true
+  printf 'OPENROUTER_API_KEY=%s\n' "$KEY" >> "$ENV.tmp"
+  mv "$ENV.tmp" "$ENV"; chmod 600 "$ENV"
+  echo "✓ Key saved in $ENV (only your user can read it)"
+  exit 0
+fi
+
 find_src() {
   found=$(ls -d "$HOME"/.codex/plugins/cache/reelstudio/reelstudio/*/engine 2>/dev/null | sort -V | tail -1)
   [ -n "$found" ] && { echo "$found"; return; }

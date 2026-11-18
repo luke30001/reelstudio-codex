@@ -16,10 +16,13 @@ cd reelstudio-codex
 ```
 The script adds this repository as a Codex plugin marketplace, installs `reelstudio@reelstudio`, puts the `reelstudio` launcher in `~/.local/bin` and sets up the engine in `~/ReelStudio` (the first run downloads Remotion with npm).
 
-Then put your key in `~/ReelStudio/.env` yourself (never paste it into a chat):
+### The only credential: your OpenRouter key
+Voice, images and word timings all go through [OpenRouter](https://openrouter.ai/keys) (create a key and add a few dollars of credit). Real photos come from Wikimedia Commons and need no key; Codex uses your ChatGPT login.
+`install.sh` asks for the key when you run it in a terminal. To set or change it later, run this yourself in the Terminal app:
+```bash
+reelstudio key
 ```
-OPENROUTER_API_KEY=sk-or-...
-```
+It reads the key without showing it and saves it in `~/ReelStudio/.env`, readable only by you. Never paste the key into Codex or any chat.
 
 ## Use
 In Codex: `/reel why lists help your memory`, or just ask "make me a 30 second reel about …".
