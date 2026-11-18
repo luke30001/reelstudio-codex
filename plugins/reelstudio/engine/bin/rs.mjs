@@ -404,8 +404,12 @@ async function bundleReel(d) {
   return bundle({
     entryPoint: path.join(ENGINE, 'src', 'index.ts'),
     publicDir: path.join(d, 'assets'),
+    // webpack's persistent cache can serve a stale @rs library after an update (React error #130): always rebuild
+    enableCaching: false,
     webpackOverride: (c) => ({
       ...c,
+      // RS_DEV=1 rs frames …  → readable React errors instead of minified ones
+      ...(process.env.RS_DEV ? {mode: 'development', optimization: {...c.optimization, minimize: false}} : {}),
       resolve: {
         ...c.resolve,
         alias: {...(c.resolve?.alias || {}), '@reel': path.join(d, 'src'), '@rs': path.join(ENGINE, 'src', 'lib')},

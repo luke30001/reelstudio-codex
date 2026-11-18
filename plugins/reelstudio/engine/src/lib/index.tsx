@@ -833,6 +833,51 @@ export const Source: React.FC<{text: string; y?: number}> = ({text, y = 1180}) =
   );
 };
 
+// ---------- end screen: the CTA always gets its own clean screen ----------
+/**
+ * Full, opaque closing screen in the brand's background: it covers the world/photos (no overlap), wiping in.
+ * title: 1-2 lines (\n), handle: defaults to the brand handle, actions: small pills ("Salva", "Segui"…), mascot: show the look's mascot.
+ * wipe: circle (opens from the center) | up (slides up) | fade.
+ */
+export const EndScreen: React.FC<{title: string; handle?: string; sub?: string; actions?: string[]; mascot?: boolean; wipe?: 'circle' | 'up' | 'fade'; kicker?: string | false}> = ({title, handle, sub, actions = [], mascot = true, wipe = 'circle', kicker}) => {
+  const b = useBrand();
+  const f = useF();
+  const {fps} = useVideoConfig();
+  const t = useReveal(0, 18);
+  const clip = wipe === 'circle' ? `circle(${t * 120}% at 50% 50%)` : undefined;
+  const lines = title.split('\n');
+  const fs = fitFont(plain(lines.reduce((a, x) => (x.length > a.length ? x : a), '')), {width: 900, lines: 1, max: 112, min: 64, charW: 0.52});
+  const pm = spring({frame: f - 8, fps, config: {damping: 12, mass: 0.8}});
+  const k = kicker === false ? null : (kicker ?? b.name ?? '').toUpperCase();
+  const img = mascot ? b.mascot : undefined;
+  return (
+    <AbsoluteFill style={{clipPath: clip, opacity: wipe === 'fade' ? t : 1, transform: wipe === 'up' ? `translateY(${(1 - t) * 100}%)` : undefined}}>
+      <BrandBG />
+      <AbsoluteFill style={{top: SAFE.top, height: SAFE.bottom - SAFE.top, left: 70, right: 70, width: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 30, textAlign: 'center'}}>
+        {img ? (
+          <div style={{width: 380, height: 380, transform: `translateY(${(1 - pm) * 60}px) scale(${0.8 + pm * 0.2}) rotate(${Math.sin(f / 22) * 2}deg)`, opacity: Math.min(1, pm * 1.4), mixBlendMode: isLight(b.colors.bg1) ? 'multiply' : 'normal'}}>
+            <Img src={staticFile(img)} style={{width: '100%', height: '100%', objectFit: 'contain'}} />
+          </div>
+        ) : null}
+        {k ? <div style={{fontFamily: b.font || sans, fontSize: 26, fontWeight: 600, letterSpacing: 6, color: b.colors.muted, opacity: useReveal(10, 14)}}>{k}</div> : null}
+        <div style={{fontFamily: displayOf(b), fontSize: fs, fontWeight: 650, lineHeight: 1.06, letterSpacing: -1, color: ink(b)}}>
+          {lines.map((ln, i) => {
+            const r = useReveal(12 + i * 6, 20);
+            return <div key={i} style={{overflow: 'hidden', paddingBottom: fs * 0.08}}><div style={{transform: `translateY(${(1 - r) * 105}%)`}}><Rich text={ln} /></div></div>;
+          })}
+        </div>
+        {sub ? <div style={{fontFamily: b.font || sans, fontSize: 38, fontWeight: 500, color: b.colors.muted, opacity: useReveal(22, 14), maxWidth: 900, lineHeight: 1.3, textWrap: 'balance'} as React.CSSProperties}><Rich text={sub} /></div> : null}
+        <Pill text={handle || b.handle || ''} size={48} delay={24} />
+        {actions.length ? (
+          <div style={{display: 'flex', gap: 16, flexWrap: 'wrap', justifyContent: 'center'}}>
+            {actions.map((a, i) => { const p = usePop(32 + i * 5, 14); return <div key={i} style={{transform: `scale(${p})`, opacity: Math.min(1, p * 1.4)}}><Tag text={a} size={30} /></div>; })}
+          </div>
+        ) : null}
+      </AbsoluteFill>
+    </AbsoluteFill>
+  );
+};
+
 // ---------- photos: archival treatment, grain, credits ----------
 export type Grade = 'none' | 'bw' | 'sepia' | 'faded' | 'punch';
 /** CSS filter for a photo grade: bw (rich black and white), sepia (warm archival), faded (soft, low contrast), punch (vivid). */

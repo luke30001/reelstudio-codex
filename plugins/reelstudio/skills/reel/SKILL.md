@@ -37,7 +37,7 @@ Rules for the script:
 - **Hook in the first 2 seconds**: a surprising claim, number or question. No "Ciao a tutti", no "In questo video".
 - 5–9 scenes, one idea each, 6–20 words of voiceover per scene. Short spoken sentences. Write numbers the way they should be spoken ("quattro", not "4"), because the TTS reads exactly what you write.
 - Facts must be true. If you're not sure of a number, leave it out.
-- End with a payoff, then a short CTA scene (follow, save, comment a word).
+- End with a payoff, then a short CTA scene (follow, save, comment a word). The CTA always gets **its own clean screen**: `<EndScreen title="…" sub="…" actions={['Salva', 'Segui']} />` (opaque brand background that covers the world/photos, mascot if the look has one, brand handle pill). Never lay the CTA over photos, a world or another scene's visuals.
 - `id`s are short, stable slugs. Changing a scene's `voiceover` re-voices only that scene.
 
 Show the user the script (voiceover lines only) and wait for an OK before spending on voice, unless they said to go straight through.
@@ -93,7 +93,7 @@ The way to reach top-tier explainer quality on any topic, with the `editoriale` 
 
 ```tsx
 import React from 'react';
-import {Reel, ReelProps, Headline, Pill, StatCard, Badge, ChartCard, Source, Credit, Grain, At, WorldGround, WorldImage, CoverFrame, AbsoluteFill, useBrand, useReveal} from '@rs';
+import {Reel, ReelProps, Headline, Pill, StatCard, Badge, ChartCard, Source, Credit, Grain, At, WorldGround, WorldImage, EndScreen, CoverFrame, AbsoluteFill, useBrand, useReveal} from '@rs';
 
 const W: [number, number] = [3240, 6300];
 // Prints laid out on a paper table, far apart so the camera travels (photos from `rs photo`, 3000 px wide)
@@ -122,7 +122,7 @@ export default (p: ReelProps) => (
       crowd: <><StatCard value={12.9} decimals={1} suffix=" mln" label="azioni scambiate: *un record*" y={900} w={680} delay={150} /><Credit file="img/crowd.jpg" y={1165} /></>,
       chart: <><Dim /><ChartCard type="line" data={[381, 199, 294, 41]} labels={['set 1929', '', '', 'lug 1932']} title="Dow Jones, 1929–1932" x={540} y={720} w={940} h={640} /><Badge value="−89%" label="dal massimo" x={540} y={1150} color="#B3261E" delay={150} /><Source text="Fonte: S&P Dow Jones Indices" y={1215} /></>,
       line: <><StatCard value={25} suffix="%" label="disoccupati negli USA nel 1933" y={880} w={720} /><Credit file="img/line.jpg" y={1170} /></>,
-      cta: <Headline title={"Storie che hanno\ncambiato l'economia"} pill="segui @tuohandle" />,
+      cta: <EndScreen title={"Storie che hanno\ncambiato l'economia"} sub="Ogni settimana una crisi, spiegata" actions={['Salva', 'Segui']} />,  // own screen, never over the world
     }}
   />
 );
@@ -141,7 +141,7 @@ export const Cover = (p: ReelProps) => (
 - **Quality bar** (check it in the frames): generous margins (≥ 70 px), nothing touching the edges, aligned centers, white cards with soft shadows, one accent color, no emoji, no clutter (≤ 3 overlays at once), every number with a `Source`, every real photo with its `Credit`, no image shown above its native resolution, no crude SVG standing in for a real object, the camera never static for a whole scene and never cutting. The captions stay (pill style) unless the user turns them off.
 
 ## 6. Self-check (mandatory)
-`$RS frames <name>` renders two stills per scene to `reels/<name>/frames/` (`<id>-a` shortly after entry, `<id>-b` near the end). A bundling error means a code bug: fix it and run again. With a camera world add `--strip`: one `<id>-strip.png` per scene with 5 moments (0, 15, 35, 60, 90%) to judge the moves.
+`$RS frames <name>` renders two stills per scene to `reels/<name>/frames/` (`<id>-a` shortly after entry, `<id>-b` near the end). A bundling error means a code bug: fix it and run again. For a minified React error ("Minified React error #…"), run the same command with `RS_DEV=1` in front to get the readable message. With a camera world add `--strip`: one `<id>-strip.png` per scene with 5 moments (0, 15, 35, 60, 90%) to judge the moves.
 **Open every PNG with `view_image`** and check: text cut off or overflowing, overlaps with the captions, unreadable contrast on images, an empty or broken scene, typos, too much text, the same layout over and over, labels pointing at the wrong place, a blurry image (zoomed past its resolution), a move that goes nowhere. Fix `Reel.tsx` (or regenerate an image) and run `frames` again until it's clean. Check one exact moment with `--at <frame>`. Two rounds are normal.
 
 ## 7. Render
