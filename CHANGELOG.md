@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.5
+- Voice no longer sounds out of breath: normal breathing pauses are kept (only pauses over 0.65 s are shortened), the compressor is much gentler so breath noise is not pumped up, and the voice instructions ask for a natural, relaxed pace.
+- 0.2 s between scenes (about 0.45 s of silence in all, like a sentence break).
+- The untouched take is kept in `assets/vo/raw/`; `voice <reel> --repolish` redoes the polish without paying for a new take.
+
 ## 0.4.4
 - Smoother voice: every clip is trimmed at both ends, pauses over 0.3 s are shortened, and a light EQ and compressor even it out. In a test reel the dead air dropped from 5.4 s to 0.6 s.
 - The final video is mixed to -14 LUFS, the usual level for Reels and TikTok (it was about -18, too quiet).

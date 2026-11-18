@@ -240,21 +240,27 @@ function cmdNew(pos, flags) {
 }
 
 // ---------- voice ----------
-// Voice polish, applied to every TTS clip: trim the silence TTS leaves at both ends, shorten long pauses inside
-// (they make a reel sound halting), clean low rumble, add a little presence, even out the level.
+// Voice polish, applied to every TTS clip: trim the dead air TTS leaves at both ends and cap only the really long
+// pauses inside (shorter ones are breathing room: cutting them makes the voice sound out of breath), clean low rumble,
+// add a touch of presence, set an even level. Gentle on purpose: no heavy compression, which pumps up breath noise.
+// The untouched clip stays in assets/vo/raw/, so `voice --repolish` can redo this for free.
 const VOICE_POLISH = [
-  'silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.04',
-  'areverse', 'silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.12', 'areverse',
-  'silenceremove=stop_periods=-1:stop_duration=0.3:stop_threshold=-45dB:stop_silence=0.24',
-  'highpass=f=70', 'equalizer=f=3500:t=q:w=1:g=2',
-  'acompressor=threshold=-20dB:ratio=2.5:attack=8:release=120:makeup=2',
-  'loudnorm=I=-15:TP=-1.5:LRA=7', 'aresample=44100',
+  'silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.06',
+  'areverse', 'silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.2', 'areverse',
+  'silenceremove=stop_periods=-1:stop_duration=0.65:stop_threshold=-50dB:stop_silence=0.45',
+  'highpass=f=70', 'equalizer=f=3500:t=q:w=1:g=1.5',
+  'acompressor=threshold=-16dB:ratio=1.6:attack=15:release=200:makeup=1',
+  'loudnorm=I=-15:TP=-1.5:LRA=9', 'aresample=44100',
 ].join(',');
-function polishVoice(inArgs, outMp3, flags = {}) {
+function polishVoice(raw, outMp3, flags = {}) {
   const af = flags['raw-voice'] ? 'aresample=44100' : VOICE_POLISH;
-  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', ...inArgs, '-af', af, '-ac', '1', '-b:a', '192k', outMp3]);
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', raw, '-af', af, '-ac', '1', '-b:a', '192k', outMp3]);
 }
-const PACE = 'Keep a fluid, brisk social-video pace: connect the sentences, no long pauses between them.';
+const rawClip = (outMp3) => {
+  const dir = path.join(path.dirname(outMp3), 'raw'), id = path.basename(outMp3, '.mp3');
+  return ['.wav', '.mp3'].map((e) => path.join(dir, id + e)).find((f) => fs.existsSync(f));
+};
+const PACE = 'Natural, conversational pace: relaxed, with normal breathing pauses between sentences; never rushed, never dragging.';
 async function ttsScene(text, brand, m, outMp3, flags) {
   const model = flags.model || brand.voice?.model || m.tts[flags.tier || 'model'] || m.tts.model;
   if (flags.local) {
@@ -277,16 +283,22 @@ async function ttsScene(text, brand, m, outMp3, flags) {
   if (model.startsWith('google/')) {
     // Gemini TTS returns raw PCM only (16-bit, 24 kHz, mono): convert it to mp3
     body.response_format = 'pcm';
-    const pcm = outMp3.replace(/\.mp3$/, '.pcm');
+    const rawDir = path.join(path.dirname(outMp3), 'raw'), id = path.basename(outMp3, '.mp3');
+    fs.mkdirSync(rawDir, {recursive: true});
+    const pcm = path.join(rawDir, id + '.pcm'), wav = path.join(rawDir, id + '.wav');
     fs.writeFileSync(pcm, await orFetch('/audio/speech', body, {raw: true}));
-    polishVoice(['-f', 's16le', '-ar', '24000', '-ac', '1', '-i', pcm], outMp3, flags);
+    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 's16le', '-ar', '24000', '-ac', '1', '-i', pcm, wav]);
     fs.rmSync(pcm);
+    fs.rmSync(path.join(rawDir, id + '.mp3'), {force: true});
+    polishVoice(wav, outMp3, flags);
     return model;
   }
-  const tmp = outMp3.replace(/\.mp3$/, '.raw.mp3');
-  fs.writeFileSync(tmp, await orFetch('/audio/speech', body, {raw: true}));
-  polishVoice(['-i', tmp], outMp3, flags);
-  fs.rmSync(tmp);
+  const rawDir = path.join(path.dirname(outMp3), 'raw'), id = path.basename(outMp3, '.mp3');
+  fs.mkdirSync(rawDir, {recursive: true});
+  const raw = path.join(rawDir, id + '.mp3');
+  fs.writeFileSync(raw, await orFetch('/audio/speech', body, {raw: true}));
+  fs.rmSync(path.join(rawDir, id + '.wav'), {force: true});
+  polishVoice(raw, outMp3, flags);
   return model;
 }
 
@@ -337,14 +349,21 @@ async function cmdVoice(pos, flags) {
     const file = path.join(vo, s.id + '.mp3');
     const prev = old.scenes.find((x) => x.id === s.id);
     let words = prev?.words, secs, via = prev?.via;
-    const stale = !fs.existsSync(file) || prev?.voiceover !== s.voiceover || (only && only.has(s.id)) || flags.force;
-    if (stale) {
+    const stale = !fs.existsSync(file) || prev?.voiceover !== s.voiceover || (only && only.has(s.id) && !flags.repolish) || flags.force;
+    const repolish = !stale && flags.repolish && (!only || only.has(s.id)) && rawClip(file);
+    if (repolish) {
+      // same take, polish redone (e.g. after an engine update): only the word timings are fetched again
+      polishVoice(repolish, file, flags);
+      secs = probeSeconds(file);
+      words = alignWords(s.voiceover, await wordTimes(file, brand.language || 'it', m), secs);
+      log(`  ${s.id}: ${secs.toFixed(2)}s re-polished`);
+    } else if (stale) {
       via = await ttsScene(s.voiceover, brand, m, file, flags);
       secs = probeSeconds(file);
       words = alignWords(s.voiceover, await wordTimes(file, brand.language || 'it', m), secs);
       log(`  ${s.id}: ${secs.toFixed(2)}s via ${via}`);
     } else secs = probeSeconds(file);
-    const hold = s.hold ?? 0.1;  // clips end with 0.12 s of air already
+    const hold = s.hold ?? 0.2;  // clips end with 0.2 s of air: about 0.45 s between scenes, like a sentence break
     const duration = Math.ceil((secs + hold) * FPS);
     scenes.push({id: s.id, from, duration, audio: `vo/${s.id}.mp3`, voiceover: s.voiceover, via,
       words: words.map((w) => ({text: w.text, start: Math.round(w.start * FPS), end: Math.max(Math.round(w.end * FPS), Math.round(w.start * FPS) + 2)}))});
@@ -687,7 +706,7 @@ if (!table[cmd]) {
   log(`rs — ReelStudio
   setup                          install engine into ${HOME}
   new "<topic>" [--brand b]      create a reel, prints its name
-  voice <reel> [--scene id] [--voice Charon] [--raw-voice] [--tier eleven|native|budget] [--force] [--local = macOS draft voice, only on request]
+  voice <reel> [--scene id] [--voice Charon] [--repolish] [--raw-voice] [--tier eleven|native|budget] [--force] [--local = macOS draft voice, only on request]
   image <reel> <name> "<prompt>" [--hero] [--world] [--res 2K|4K] [--aspect 1:1] [--mascot] [--ref img/x.png] [--no-style]
   look-image <look> <name> "<prompt>" [--mascot] [--hero]
   app                            start the ReelStudio app (http://localhost:4747)
