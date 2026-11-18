@@ -29,7 +29,7 @@ Get the topic (or the user's script), the brand (`$RS list` shows brands and loo
 
 ```json
 {"title": "...", "brand": "default", "scenes": [
-  {"id": "hook", "voiceover": "...", "visual": "what is on screen", "hold": 0.25}
+  {"id": "hook", "voiceover": "...", "visual": "what is on screen", "hold": 0.1}
 ]}
 ```
 
@@ -43,7 +43,7 @@ Rules for the script:
 Show the user the script (voiceover lines only) and wait for an OK before spending on voice, unless they said to go straight through.
 
 ## 3. Voice and timing
-`$RS voice <name>`: generates one MP3 per scene with **Gemini 3.8 Flash TTS** (voice Charon: #1 in the TTS arena, native-sounding Italian) via OpenRouter, gets word timestamps from Nemotron transcription, and writes `timeline.json` (frames at 30 fps per scene and per word). The brand's `voice.instructions` steers tone and pace (write them in the reel's language, e.g. "tono da documentario, ritmo deciso"). Options: `--scene id1,id2` to redo some scenes, `--voice <name>` (Gemini: Charon, Kore, Puck, Aoede, Fenrir, Leda, Orus, Zephyr…), `--tier eleven` (ElevenLabs v4: most expressive, understands `[excited]` `[whispers]` `[pause]` tags, but its premade voices are English speakers), `--tier native` (Microsoft MAI-Voice-2.1, true it-IT voices Luca/Rosa, slower and pausier), `--tier budget`, `--local` (robotic macOS draft voice: **only when the user explicitly asks for a free draft**. Never use it as a fallback: if `voice` fails because of the network or the key, fix that, e.g. re-run the same command with network access, and `render` refuses draft-voice scenes anyway). A brand can pin voices per model: `"voice": {"voices": {"google/gemini-3.8-flash-tts": "Kore"}}`.
+`$RS voice <name>`: generates one MP3 per scene with **Gemini 3.8 Flash TTS** (voice Charon: #1 in the TTS arena, native-sounding Italian) via OpenRouter, gets word timestamps from Nemotron transcription, and writes `timeline.json` (frames at 30 fps per scene and per word). The brand's `voice.instructions` steers tone and pace (write them in the reel's language, e.g. "tono da documentario, ritmo deciso"). Options: `--scene id1,id2` to redo some scenes, `--voice <name>` (Gemini: Charon, Kore, Puck, Aoede, Fenrir, Leda, Orus, Zephyr…), `--tier eleven` (ElevenLabs v4: most expressive, understands `[excited]` `[whispers]` `[pause]` tags, but its premade voices are English speakers), `--tier native` (Microsoft MAI-Voice-2.1, true it-IT voices Luca/Rosa, slower and pausier), `--tier budget`, `--local` (robotic macOS draft voice: **only when the user explicitly asks for a free draft**. Never use it as a fallback: if `voice` fails because of the network or the key, fix that, e.g. re-run the same command with network access, and `render` refuses draft-voice scenes anyway). Every clip is polished automatically: silence trimmed at both ends, pauses over 0.3 s shortened, light EQ and compression, even level (`--raw-voice` skips it); the render brings the mix to −14 LUFS. Scenes follow each other with a 0.1 s `hold`: raise it only for a deliberate dramatic beat (0.4–0.6). Voice instructions get a fluid-pace note; set `"pace": "free"` in the brand voice to drop it. Write voiceover as connected sentences that flow into the next scene, not isolated captions. A brand can pin voices per model: `"voice": {"voices": {"google/gemini-3.8-flash-tts": "Kore"}}`.
 
 ## 4. Visual material: choose what serves each shot
 Nothing is forced: per shot, pick the material that looks best and is honest, and mix freely. Ask the user's limit for paid images (default ≤ 4).

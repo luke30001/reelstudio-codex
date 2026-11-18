@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.4
+- Smoother voice: every clip is trimmed at both ends, pauses over 0.3 s are shortened, and a light EQ and compressor even it out. In a test reel the dead air dropped from 5.4 s to 0.6 s.
+- The final video is mixed to -14 LUFS, the usual level for Reels and TikTok (it was about -18, too quiet).
+- Scenes follow each other with a 0.1 s gap instead of about 0.8 s; voice instructions ask for a fluid pace (`"pace": "free"` in a brand turns that off); `--raw-voice` skips the polish.
+
 ## 0.4.3
 - No more robotic voice by surprise: the macOS draft voice is used only when you ask for it (`--local`), and `render` refuses draft-voice scenes. A missing key or a network blocked by the Codex sandbox now stops with a clear message instead of falling back silently.
 - New commands: `reelstudio doctor` (health check, including whether OpenRouter accepts your key), `reelstudio update` (latest version from GitHub in one step), `reelstudio version`, `reelstudio help`.

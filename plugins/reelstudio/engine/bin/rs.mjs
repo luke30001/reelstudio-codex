@@ -240,6 +240,21 @@ function cmdNew(pos, flags) {
 }
 
 // ---------- voice ----------
+// Voice polish, applied to every TTS clip: trim the silence TTS leaves at both ends, shorten long pauses inside
+// (they make a reel sound halting), clean low rumble, add a little presence, even out the level.
+const VOICE_POLISH = [
+  'silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.04',
+  'areverse', 'silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.12', 'areverse',
+  'silenceremove=stop_periods=-1:stop_duration=0.3:stop_threshold=-45dB:stop_silence=0.24',
+  'highpass=f=70', 'equalizer=f=3500:t=q:w=1:g=2',
+  'acompressor=threshold=-20dB:ratio=2.5:attack=8:release=120:makeup=2',
+  'loudnorm=I=-15:TP=-1.5:LRA=7', 'aresample=44100',
+].join(',');
+function polishVoice(inArgs, outMp3, flags = {}) {
+  const af = flags['raw-voice'] ? 'aresample=44100' : VOICE_POLISH;
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', ...inArgs, '-af', af, '-ac', '1', '-b:a', '192k', outMp3]);
+}
+const PACE = 'Keep a fluid, brisk social-video pace: connect the sentences, no long pauses between them.';
 async function ttsScene(text, brand, m, outMp3, flags) {
   const model = flags.model || brand.voice?.model || m.tts[flags.tier || 'model'] || m.tts.model;
   if (flags.local) {
@@ -256,18 +271,22 @@ async function ttsScene(text, brand, m, outMp3, flags) {
   const brandVoice = bv.voices?.[model] || (bv.voice && (bv.model ? bv.model === model : model.startsWith('elevenlabs/')) ? bv.voice : '');
   const voice = flags.voice || brandVoice || m.tts.voices?.[model] || (model.startsWith('elevenlabs/') ? m.tts.default_voice : '');
   if (voice) body.voice = voice;
-  if (brand.voice?.instructions) body.instructions = brand.voice.instructions;
+  const pace = bv.pace === 'free' ? '' : PACE;
+  if (bv.instructions || pace) body.instructions = [bv.instructions, pace].filter(Boolean).join(' ');
   if (brand.voice?.speed) body.speed = brand.voice.speed;
   if (model.startsWith('google/')) {
     // Gemini TTS returns raw PCM only (16-bit, 24 kHz, mono): convert it to mp3
     body.response_format = 'pcm';
     const pcm = outMp3.replace(/\.mp3$/, '.pcm');
     fs.writeFileSync(pcm, await orFetch('/audio/speech', body, {raw: true}));
-    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 's16le', '-ar', '24000', '-ac', '1', '-i', pcm, '-ar', '44100', '-b:a', '192k', outMp3]);
+    polishVoice(['-f', 's16le', '-ar', '24000', '-ac', '1', '-i', pcm], outMp3, flags);
     fs.rmSync(pcm);
     return model;
   }
-  fs.writeFileSync(outMp3, await orFetch('/audio/speech', body, {raw: true}));
+  const tmp = outMp3.replace(/\.mp3$/, '.raw.mp3');
+  fs.writeFileSync(tmp, await orFetch('/audio/speech', body, {raw: true}));
+  polishVoice(['-i', tmp], outMp3, flags);
+  fs.rmSync(tmp);
   return model;
 }
 
@@ -325,7 +344,7 @@ async function cmdVoice(pos, flags) {
       words = alignWords(s.voiceover, await wordTimes(file, brand.language || 'it', m), secs);
       log(`  ${s.id}: ${secs.toFixed(2)}s via ${via}`);
     } else secs = probeSeconds(file);
-    const hold = s.hold ?? 0.25;
+    const hold = s.hold ?? 0.1;  // clips end with 0.12 s of air already
     const duration = Math.ceil((secs + hold) * FPS);
     scenes.push({id: s.id, from, duration, audio: `vo/${s.id}.mp3`, voiceover: s.voiceover, via,
       words: words.map((w) => ({text: w.text, start: Math.round(w.start * FPS), end: Math.max(Math.round(w.end * FPS), Math.round(w.start * FPS) + 2)}))});
@@ -603,19 +622,23 @@ async function cmdRender(pos, flags = {}) {
   // playback speed: --speed 1.5 (or "speed" in reel.json). Voice keeps its pitch; every frame is kept (30 fps × speed, max 60).
   const speed = Number(flags.speed ?? inputProps.reel.speed ?? 1);
   if (!(speed >= 0.5 && speed <= 2)) die('--speed must be between 0.5 and 2');
-  const raw = speed === 1 ? file : path.join(outDir, `.v${n}-1x.mp4`);
+  const raw = path.join(outDir, `.v${n}-1x.mp4`);
   let last = -1;
   await R.renderMedia({
     composition: comp, serveUrl, inputProps, codec: 'h264', outputLocation: raw, crf: 18, audioBitrate: '192k',
     onProgress: ({progress}) => { const p = Math.floor(progress * 10); if (p !== last) { last = p; process.stdout.write(`  ${p * 10}%\r`); } },
   });
+  // final audio: social loudness (-14 LUFS, peaks under -1 dB); with --speed also the faster cut
+  const loud = 'loudnorm=I=-14:TP=-1:LRA=9,aresample=48000';
   if (speed !== 1) {
     const fps = Math.min(60, Math.round(30 * speed));
-    execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-i', raw, '-filter_complex', `[0:v]setpts=PTS/${speed},fps=${fps}[v];[0:a]atempo=${speed}[a]`,
+    execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-i', raw, '-filter_complex', `[0:v]setpts=PTS/${speed},fps=${fps}[v];[0:a]atempo=${speed},${loud}[a]`,
       '-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-crf', '18', '-preset', 'slow', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-c:a', 'aac', '-b:a', '192k', file]);
-    fs.rmSync(raw);
     log(`  speed ${speed}× → ${(probeSeconds(file)).toFixed(1)}s at ${fps} fps`);
+  } else {
+    execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-i', raw, '-map', '0:v', '-map', '0:a', '-c:v', 'copy', '-af', loud, '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', file]);
   }
+  fs.rmSync(raw);
   fs.copyFileSync(file, path.join(d, 'final.mp4'));
   const coverComp = (await R.getCompositions(serveUrl, {inputProps})).find((c) => c.id === 'Cover');
   await R.renderStill({composition: coverComp || comp, serveUrl, inputProps, frame: coverComp ? 0 : (inputProps.reel.coverFrame ?? 20), output: path.join(d, 'cover.png')});
@@ -664,7 +687,7 @@ if (!table[cmd]) {
   log(`rs — ReelStudio
   setup                          install engine into ${HOME}
   new "<topic>" [--brand b]      create a reel, prints its name
-  voice <reel> [--scene id] [--voice Charon] [--tier eleven|native|budget] [--force] [--local = macOS draft voice, only on request]
+  voice <reel> [--scene id] [--voice Charon] [--raw-voice] [--tier eleven|native|budget] [--force] [--local = macOS draft voice, only on request]
   image <reel> <name> "<prompt>" [--hero] [--world] [--res 2K|4K] [--aspect 1:1] [--mascot] [--ref img/x.png] [--no-style]
   look-image <look> <name> "<prompt>" [--mascot] [--hero]
   app                            start the ReelStudio app (http://localhost:4747)

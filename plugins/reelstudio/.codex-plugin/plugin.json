@@ -1,6 +1,6 @@
 {
   "name": "reelstudio",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Local reel factory: Codex is the producer and the crew; OpenRouter provides voice (TTS), images and word timestamps; Remotion + ffmpeg render the MP4 on your Mac.",
   "author": {
     "name": "ReelStudio"
