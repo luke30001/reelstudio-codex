@@ -578,18 +578,29 @@ async function cmdIcon(pos) {
   }
 }
 
-async function cmdRender(pos) {
+async function cmdRender(pos, flags = {}) {
   const {d, R, serveUrl, inputProps} = await prep(pos[0]);
   const comp = await R.selectComposition({serveUrl, id: 'Reel', inputProps});
   const outDir = path.join(d, 'out');
   fs.mkdirSync(outDir, {recursive: true});
   const n = fs.readdirSync(outDir).filter((f) => /^v\d+\.mp4$/.test(f)).length + 1;
   const file = path.join(outDir, `v${n}.mp4`);
+  // playback speed: --speed 1.5 (or "speed" in reel.json). Voice keeps its pitch; every frame is kept (30 fps × speed, max 60).
+  const speed = Number(flags.speed ?? inputProps.reel.speed ?? 1);
+  if (!(speed >= 0.5 && speed <= 2)) die('--speed must be between 0.5 and 2');
+  const raw = speed === 1 ? file : path.join(outDir, `.v${n}-1x.mp4`);
   let last = -1;
   await R.renderMedia({
-    composition: comp, serveUrl, inputProps, codec: 'h264', outputLocation: file, crf: 18, audioBitrate: '192k',
+    composition: comp, serveUrl, inputProps, codec: 'h264', outputLocation: raw, crf: 18, audioBitrate: '192k',
     onProgress: ({progress}) => { const p = Math.floor(progress * 10); if (p !== last) { last = p; process.stdout.write(`  ${p * 10}%\r`); } },
   });
+  if (speed !== 1) {
+    const fps = Math.min(60, Math.round(30 * speed));
+    execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-i', raw, '-filter_complex', `[0:v]setpts=PTS/${speed},fps=${fps}[v];[0:a]atempo=${speed}[a]`,
+      '-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-crf', '18', '-preset', 'slow', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-c:a', 'aac', '-b:a', '192k', file]);
+    fs.rmSync(raw);
+    log(`  speed ${speed}× → ${(probeSeconds(file)).toFixed(1)}s at ${fps} fps`);
+  }
   fs.copyFileSync(file, path.join(d, 'final.mp4'));
   const coverComp = (await R.getCompositions(serveUrl, {inputProps})).find((c) => c.id === 'Cover');
   await R.renderStill({composition: coverComp || comp, serveUrl, inputProps, frame: coverComp ? 0 : (inputProps.reel.coverFrame ?? 20), output: path.join(d, 'cover.png')});
@@ -631,7 +642,7 @@ const {pos, flags} = args(rest);
 const needEngine = ['frames', 'render'];
 if (needEngine.includes(cmd) && !fs.existsSync(path.join(ENGINE, 'node_modules', 'remotion'))) die('run `rs setup` first');
 const table = {setup, new: () => cmdNew(pos, flags), voice: () => cmdVoice(pos, flags), image: () => cmdImage(pos, flags),
-  frames: () => cmdFrames(pos, flags), render: () => cmdRender(pos), models: cmdModels, list: cmdList, icon: () => cmdIcon(pos), photo: () => cmdPhoto(pos, flags),
+  frames: () => cmdFrames(pos, flags), render: () => cmdRender(pos, flags), models: cmdModels, list: cmdList, icon: () => cmdIcon(pos), photo: () => cmdPhoto(pos, flags),
   'look-image': () => cmdLookImage(pos, flags), 'install-app': installApp, brand: async () => log(JSON.stringify(await brandProps(reelDir(pos[0]), readJSON(path.join(reelDir(pos[0]), 'reel.json')).brand), null, 2)),
   app: () => import(path.join(HOME, 'app', 'server.mjs'))};
 if (!table[cmd]) {
@@ -647,7 +658,7 @@ if (!table[cmd]) {
   photo <reel> search "<query>"  find real photos on Wikimedia Commons (free licenses) + contact sheet
   photo <reel> get <n> <name>    download photo n as assets/img/<name>.jpg, credit in assets/credits.json
   frames <reel> [--at frame] [--strip]   check stills to <reel>/frames (--strip: motion sheet per scene)
-  render <reel>                  final.mp4 + cover.png
+  render <reel> [--speed 1.5]    final.mp4 + cover.png (speed: faster playback, voice pitch kept)
   models                         current picks + live OpenRouter catalog
   list                           reels and brands`);
   process.exit(cmd ? 1 : 0);

@@ -127,7 +127,9 @@ export const Mascot: React.FC<{src?: string; pos?: 'corner' | 'center' | 'peek';
     pos === 'peek' ? {left: 1080 - sz * 0.72 + (1 - p) * sz, top: SAFE.bottom - sz - 10} :
     {left: 1080 - 60 - sz, top: SAFE.bottom - sz + 40};
   return (
-    <AbsoluteFill style={{...style, right: 'auto', bottom: 'auto', width: sz, height: sz, transform: `translateY(${bob + (1 - p) * 80}px) rotate(${Math.sin(f / 20) * 2}deg)`, opacity: p}}>
+    // multiply on light backgrounds: white fills of an ink-drawn mascot blend into the paper instead of showing a white box
+    // (set on the outer layer: an inner blend would be isolated by this layer's transform/opacity)
+    <AbsoluteFill style={{...style, right: 'auto', bottom: 'auto', width: sz, height: sz, transform: `translateY(${bob + (1 - p) * 80}px) rotate(${Math.sin(f / 20) * 2}deg)`, opacity: p, mixBlendMode: isLight(b.colors.bg1) ? 'multiply' : 'normal'}}>
       <Img src={staticFile(img)} style={{width: '100%', height: '100%', objectFit: 'contain'}} />
     </AbsoluteFill>
   );
@@ -587,7 +589,7 @@ export const Pill: React.FC<{text: string; tone?: 'accent' | 'ink' | 'light'; si
   const bg = tone === 'accent' ? b.colors.accent : tone === 'ink' ? ink(b) : (b.colors.card || '#fff');
   const fg = tone === 'accent' ? onAccent(b) : tone === 'ink' ? b.colors.bg1 : ink(b);
   return (
-    <div style={{display: 'inline-block', width: 'fit-content', alignSelf: 'center', padding: `${size * 0.24}px ${size * 0.66}px`, borderRadius: 999, background: bg, color: fg, fontFamily: sans, fontWeight: 700, fontSize: size, letterSpacing: -0.2, lineHeight: 1.1, whiteSpace: 'nowrap', boxShadow: tone === 'light' ? SHADOW : '0 10px 24px -14px rgba(0,0,0,.45)', transform: `scale(${0.6 + p * 0.4})`, opacity: Math.min(1, p * 1.4), ...style}}>
+    <div style={{display: 'inline-block', width: 'fit-content', alignSelf: 'center', padding: `${size * 0.24}px ${size * 0.66}px`, borderRadius: 999, background: bg, color: fg, fontFamily: b.font || sans, fontWeight: 700, fontSize: size, letterSpacing: -0.2, lineHeight: 1.1, whiteSpace: 'nowrap', boxShadow: tone === 'light' ? SHADOW : '0 10px 24px -14px rgba(0,0,0,.45)', transform: `scale(${0.6 + p * 0.4})`, opacity: Math.min(1, p * 1.4), ...style}}>
       <Rich text={text} accent={tone === 'accent' ? fg : b.colors.accent} />
     </div>
   );
@@ -608,7 +610,7 @@ export const Headline: React.FC<{title: string; kicker?: string | false; pill?: 
     <>
       {fade ? <AbsoluteFill style={{height: y + fs * 2.6 + (pill ? 160 : 60), background: `linear-gradient(180deg, ${b.colors.bg1} 0%, ${b.colors.bg1}F2 55%, ${b.colors.bg1}00 100%)`}} /> : null}
       <AbsoluteFill style={{top: y, left: 70, right: 70, width: 'auto', height: 'auto', bottom: 'auto', display: 'flex', flexDirection: 'column', alignItems: align === 'center' ? 'center' : 'flex-start', gap: 22, textAlign: align}}>
-        {k ? <div style={{fontFamily: sans, fontSize: 24, fontWeight: 600, letterSpacing: 6, color: b.colors.muted, opacity: rk}}>{k}</div> : null}
+        {k ? <div style={{fontFamily: b.font || sans, fontSize: 24, fontWeight: 600, letterSpacing: 6, color: b.colors.muted, opacity: rk}}>{k}</div> : null}
         <div style={{fontFamily: displayOf(b), fontSize: fs, fontWeight: 600, lineHeight: 1.06, letterSpacing: -1, color: ink(b)}}>
           {lines.map((ln, i) => {
             const r0 = useRevealSafe(delay + 4 + i * 6);
@@ -633,7 +635,7 @@ export const Tag: React.FC<{text: string; size?: number; tone?: 'light' | 'ink' 
   const b = useBrand();
   const bg = tone === 'light' ? (b.colors.card || '#fff') : tone === 'ink' ? ink(b) : b.colors.accent;
   const fg = tone === 'light' ? ink(b) : tone === 'ink' ? b.colors.bg1 : onAccent(b);
-  return <div style={{display: 'inline-block', width: 'fit-content', padding: `${size * 0.3}px ${size * 0.6}px`, borderRadius: size * 0.55, background: bg, color: fg, fontFamily: sans, fontSize: size, fontWeight: 650, lineHeight: 1.1, whiteSpace: 'nowrap', boxShadow: SHADOW, ...style}}><Rich text={text} accent={tone === 'light' ? b.colors.accent : fg} /></div>;
+  return <div style={{display: 'inline-block', width: 'fit-content', padding: `${size * 0.3}px ${size * 0.6}px`, borderRadius: size * 0.55, background: bg, color: fg, fontFamily: b.font || sans, fontSize: size, fontWeight: 650, lineHeight: 1.1, whiteSpace: 'nowrap', boxShadow: SHADOW, ...style}}><Rich text={text} accent={tone === 'light' ? b.colors.accent : fg} /></div>;
 };
 
 /**
@@ -724,7 +726,7 @@ export const Badge: React.FC<{value: string; label?: string; x: number; y: numbe
   const p = usePop(delay, 14);
   const ar = arrow ? {left: '◀ ', right: '', up: '▲ ', down: '▼ '}[arrow] : '';
   return (
-    <div style={{position: 'absolute', left: x, top: y, transform: `translate(-50%,-50%) scale(${p})`, background: color || ink(b), color: '#fff', borderRadius: 18, padding: '12px 22px', fontFamily: sans, textAlign: 'center', boxShadow: SHADOW, minWidth: 130}}>
+    <div style={{position: 'absolute', left: x, top: y, transform: `translate(-50%,-50%) scale(${p})`, background: color || ink(b), color: '#fff', borderRadius: 18, padding: '12px 22px', fontFamily: b.font || sans, textAlign: 'center', boxShadow: SHADOW, minWidth: 130}}>
       {label ? <div style={{fontSize: 22, fontWeight: 600, opacity: 0.9}}>{ar}{label}{arrow === 'right' ? ' ▶' : ''}</div> : null}
       <div style={{fontSize: 54, fontWeight: 800, letterSpacing: -1, lineHeight: 1.05, fontVariantNumeric: 'tabular-nums'}}>{value}</div>
     </div>
@@ -740,7 +742,7 @@ export const StatCard: React.FC<{value: number; prefix?: string; suffix?: string
   return (
     <div style={{position: 'absolute', left: x, top: y, width: w, transform: `translate(-50%,-50%) translateY(${(1 - p) * 60}px)`, opacity: Math.min(1, p * 1.4), background: b.colors.card || '#fff', borderRadius: 36, padding: '34px 40px', boxShadow: SHADOW, textAlign: 'center'}}>
       <div style={{fontFamily: displayOf(b), fontSize: fitFont(prefix + value.toLocaleString('it-IT', {minimumFractionDigits: decimals}) + suffix, {width: w - 90, lines: 1, max: 150, min: 64, charW: 0.6}), fontWeight: 600, color: b.colors.accent, letterSpacing: -3, lineHeight: 1, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums'}}>{prefix}{v.toLocaleString('it-IT', {minimumFractionDigits: decimals, maximumFractionDigits: decimals})}{suffix}</div>
-      <div style={{fontFamily: sans, fontSize: 36, fontWeight: 600, color: ink(b), marginTop: 12, lineHeight: 1.2}}><Rich text={label} /></div>
+      <div style={{fontFamily: b.font || sans, fontSize: 36, fontWeight: 600, color: ink(b), marginTop: 12, lineHeight: 1.2}}><Rich text={label} /></div>
     </div>
   );
 };
@@ -765,7 +767,7 @@ export const ChartCard: React.FC<{type?: 'line' | 'bar'; data: number[]; labels?
   const bw = (W / data.length) * 0.62;
   return (
     <div style={{position: 'absolute', left: x, top: y, width: w, height: h, transform: `translate(-50%,-50%) translateY(${(1 - p) * 60}px)`, opacity: Math.min(1, p * 1.4), background: b.colors.card || '#fff', borderRadius: 32, boxShadow: SHADOW, overflow: 'hidden'}}>
-      {title ? <div style={{position: 'absolute', left: pad.l, top: 30, fontFamily: sans, fontSize: 32, fontWeight: 700, color: ink(b)}}><Rich text={title} /></div> : null}
+      {title ? <div style={{position: 'absolute', left: pad.l, top: 30, fontFamily: b.font || sans, fontSize: 32, fontWeight: 700, color: ink(b)}}><Rich text={title} /></div> : null}
       <svg width={w} height={h} style={{position: 'absolute', left: 0, top: 0}}>
         <defs>
           <linearGradient id="rs-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={b.colors.accent} stopOpacity={0.28} /><stop offset="1" stopColor={b.colors.accent} stopOpacity={0} /></linearGradient>
@@ -785,9 +787,9 @@ export const ChartCard: React.FC<{type?: 'line' | 'bar'; data: number[]; labels?
         })}
         {type === 'line' ? <circle cx={pts[last][0]} cy={pts[last][1]} r={11} fill={b.colors.accent} stroke="#fff" strokeWidth={4} /> : null}
       </svg>
-      {type === 'line' && d > 0.95 ? <div style={{position: 'absolute', left: pts[data.length - 1][0], top: pts[data.length - 1][1] - 22, transform: 'translate(-100%,-100%)', fontFamily: sans, fontWeight: 800, fontSize: 34, color: b.colors.accent}}>{data[data.length - 1].toLocaleString('it-IT')}{unit}</div> : null}
+      {type === 'line' && d > 0.95 ? <div style={{position: 'absolute', left: pts[data.length - 1][0], top: pts[data.length - 1][1] - 22, transform: 'translate(-100%,-100%)', fontFamily: b.font || sans, fontWeight: 800, fontSize: 34, color: b.colors.accent}}>{data[data.length - 1].toLocaleString('it-IT')}{unit}</div> : null}
       {(type === 'line' ? [0, labels.length - 1] : labels.map((_, i) => i)).filter((i) => labels[i] !== undefined).map((i) => (
-        <div key={i} style={{position: 'absolute', top: h - pad.b + 18, left: type === 'line' ? (i === 0 ? pad.l : pad.l + W) : X(i), transform: type === 'line' ? (i === 0 ? 'none' : 'translateX(-100%)') : 'translateX(-50%)', fontFamily: sans, fontSize: 24, fontWeight: 600, color: b.colors.muted, whiteSpace: 'nowrap'}}>{labels[i]}</div>
+        <div key={i} style={{position: 'absolute', top: h - pad.b + 18, left: type === 'line' ? (i === 0 ? pad.l : pad.l + W) : X(i), transform: type === 'line' ? (i === 0 ? 'none' : 'translateX(-100%)') : 'translateX(-50%)', fontFamily: b.font || sans, fontSize: 24, fontWeight: 600, color: b.colors.muted, whiteSpace: 'nowrap'}}>{labels[i]}</div>
       ))}
     </div>
   );
@@ -826,7 +828,7 @@ export const Source: React.FC<{text: string; y?: number}> = ({text, y = 1180}) =
   const o = useReveal(10, 14);
   return (
     <AbsoluteFill style={{top: y, height: 'auto', bottom: 'auto', left: 70, right: 70, width: 'auto', display: 'flex', alignItems: 'center', opacity: o}}>
-      <div style={{width: 'fit-content', maxWidth: '100%', padding: '8px 18px', borderRadius: 14, background: `${b.colors.bg1}E6`, fontFamily: sans, fontSize: 24, fontWeight: 500, color: b.colors.muted, textAlign: 'center', lineHeight: 1.3}}>{text}</div>
+      <div style={{width: 'fit-content', maxWidth: '100%', padding: '8px 18px', borderRadius: 14, background: `${b.colors.bg1}E6`, fontFamily: b.font || sans, fontSize: 24, fontWeight: 500, color: b.colors.muted, textAlign: 'center', lineHeight: 1.3}}>{text}</div>
     </AbsoluteFill>
   );
 };
@@ -862,7 +864,7 @@ export const Credit: React.FC<{file: string; x?: number; y?: number; align?: 'le
   const who = (c.author || '').replace(/\s*\(.*?\)\s*/g, ' ').trim().slice(0, 48);
   const txt = ['Foto', who, c.license, 'Wikimedia Commons'].filter(Boolean).join(' · ');
   return (
-    <div style={{position: 'absolute', left: align === 'right' ? undefined : x, right: align === 'right' ? 70 : undefined, top: y, width: align === 'center' ? 940 : undefined, textAlign: align, fontFamily: sans, fontSize: 20, fontWeight: 500, letterSpacing: 0.2, color: light ? 'rgba(255,255,255,.82)' : b.colors.muted, textShadow: light ? '0 1px 6px rgba(0,0,0,.6)' : 'none'}}>{txt}</div>
+    <div style={{position: 'absolute', left: align === 'right' ? undefined : x, right: align === 'right' ? 70 : undefined, top: y, width: align === 'center' ? 940 : undefined, textAlign: align, fontFamily: b.font || sans, fontSize: 20, fontWeight: 500, letterSpacing: 0.2, color: light ? 'rgba(255,255,255,.82)' : b.colors.muted, textShadow: light ? '0 1px 6px rgba(0,0,0,.6)' : 'none'}}>{txt}</div>
   );
 };
 

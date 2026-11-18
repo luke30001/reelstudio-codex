@@ -145,7 +145,8 @@ export const Cover = (p: ReelProps) => (
 **Open every PNG with `view_image`** and check: text cut off or overflowing, overlaps with the captions, unreadable contrast on images, an empty or broken scene, typos, too much text, the same layout over and over, labels pointing at the wrong place, a blurry image (zoomed past its resolution), a move that goes nowhere. Fix `Reel.tsx` (or regenerate an image) and run `frames` again until it's clean. Check one exact moment with `--at <frame>`. Two rounds are normal.
 
 ## 7. Render
-`$RS render <name>` produces `out/vN.mp4` (a new version on every render), `final.mp4` and `cover.png`. A 30 s reel takes about 1–2 minutes. Give the user the paths, the duration and the cost of the paid calls. Suggest a caption and 3–5 hashtags in the brand's language.
+`$RS render <name>` produces `out/vN.mp4` (a new version on every render), `final.mp4` and `cover.png`. A 30 s reel takes about 1–2 minutes. To make it faster ("velocizza 1.5x"), put `"speed": 1.5` in `reel.json` (kept on every re-render) or pass `--speed 1.5`: the whole video plays faster, the voice keeps its pitch, every frame is kept (30 fps × speed, max 60). Write the timings for normal speed; check frames at normal speed.
+To re-brand a reel, copy its folder to a new name (without `out/`, `frames/`, `final.mp4`), change `brand` in `reel.json`, run `voice --force` (the new brand's voice instructions), replace hard-coded colors in `Reel.tsx` with the brand's, then frames and render. Give the user the paths, the duration and the cost of the paid calls. Suggest a caption and 3–5 hashtags in the brand's language.
 
 ## Edits later
 "Change scene 3" means: edit `reel.json` and/or `Reel.tsx`, run `$RS voice <name>` (only changed scenes are redone), then `frames` and `render`. The earlier versions stay in `out/`.
